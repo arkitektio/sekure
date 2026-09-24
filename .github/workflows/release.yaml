@@ -6,15 +6,17 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   semantic-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      issues: write
+      contents: write # release commit, tag and GitHub release
+      issues: write # release comments on fixed issues
       pull-requests: write
+    outputs:
+      tag: ${{ steps.released.outputs.tag }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { fetch-depth: 0 } # semantic-release needs full history
@@ -24,7 +26,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Run semantic-release
         env:
-          # A PAT, not GITHUB_TOKEN: releases created with GITHUB_TOKEN do not
-          # trigger other workflows, and publishall.yaml listens for them.
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
-        run: pnpm exec semantic-release
+          # The built-in token. A release it creates does not trigger other
+          # workflows, so the build below is started from here instead.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git tag --list 'v*' | sort > "$RUNNER_TEMP/tags-before"
+          pnpm exec semantic-release
+          git tag --list 'v*' | sort > "$RUNNER_TEMP/tags-after"
+      - name: Find the new release
+        id: released
+        run: |
+          tag=$(comm -13 "$RUNNER_TEMP/tags-before" "$RUNNER_TEMP/tags-after" | tail -n 1)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -n "$tag" ]; then echo "Released $tag"; else echo "No new release"; fi
+
+  # Build, sign and upload the apps for the release just created.
+  publish:
+    needs: semantic-release
+    if: needs.semantic-release.outputs.tag != ''
+    permissions:
+      contents: write # upload release assets
+    uses: ./.github/workflows/publishall.yaml
+    with:
+      tag: ${{ needs.semantic-release.outputs.tag }}
+    secrets: inherit

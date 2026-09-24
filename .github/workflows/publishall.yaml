@@ -1,5 +1,14 @@
 name: Publish a Release
 on:
+  # Called by release.yaml right after semantic-release cuts a release. Releases
+  # made with the built-in token trigger no workflows, so this is how builds start.
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to build and upload assets to (e.g. v1.2.0)
+        required: true
+        type: string
+  # A release published by hand still builds.
   release:
     types: [published, prereleased] # stable from main, prerelease from next
   workflow_dispatch: {} # dry-run the packaging matrix (main / next only, see `if:`)
@@ -24,6 +33,8 @@ jobs:
       - name: Check out Git repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          # The release commit (bumped package.json) when called from release.yaml.
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
 
       # Must run before setup-node, and stay on PATH: electron-builder's

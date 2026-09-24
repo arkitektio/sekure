@@ -110,12 +110,14 @@ if it needs ⌘/Ctrl and does not take over a common combination (⌘V, ⌘Q, En
 Releases follow the same pipeline as orkestrator:
 
 - Conventional commits on `main` (stable) or `next` (`-rc` prereleases) trigger
-  `semantic-release`, which creates a GitHub release.
-- `publishall.yaml` then builds, signs and notarizes for macOS, Windows and Linux.
-  electron-updater picks the release up.
+  `semantic-release`, which creates a GitHub release with the built-in `GITHUB_TOKEN`.
+- The same workflow then calls `publishall.yaml` for the new tag, which builds, signs and
+  notarizes for macOS, Windows and Linux. electron-updater picks the release up. (A
+  release made with the built-in token triggers no workflows, so no personal token is
+  needed.)
 
-Required repository secrets: `PAT_TOKEN`, `APPLE_ID`, `APPLE_ID_PASSWORD`,
-`APPLE_TEAM_ID`, `CSC_LINK` (base64 `.p12`), `CSC_KEY_PASSWORD`.
+Required repository secrets: `APPLE_ID`, `APPLE_ID_PASSWORD`, `APPLE_TEAM_ID`,
+`CSC_LINK` (base64 `.p12`), `CSC_KEY_PASSWORD`.
 
 Workflow actions are pinned to commit SHAs (Dependabot keeps them current), and secrets
 are scoped to the build steps.
