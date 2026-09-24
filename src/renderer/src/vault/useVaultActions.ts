@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useVault } from '@/stores/vault'
 import { api, displayError } from '@/lib/api'
-import { unlockPath } from '@/lib/vaults'
+import { LOCKED_STATE, unlockPath } from '@/lib/vaults'
 
 export function useVaultActions() {
   const navigate = useNavigate()
@@ -31,7 +31,8 @@ export function useVaultActions() {
         useVault.getState().setSwitchTarget(target)
         await api.vault.lock()
         // The 'locked' event resets the store; route explicitly for snappiness.
-        navigate(target, { replace: true })
+        const relock = !!fileId && target === unlockPath(fileId)
+        navigate(target, { replace: true, state: relock ? LOCKED_STATE : undefined })
       }
       // Locking drops the in-memory vault: save unsaved edits first, and only
       // throw them away if the user says so.

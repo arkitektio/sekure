@@ -27,9 +27,9 @@ const snapshot = {
   dirty: false
 }
 
-function renderUnlock() {
+function renderUnlock(state?: unknown) {
   return render(
-    <MemoryRouter initialEntries={['/unlock/f1']}>
+    <MemoryRouter initialEntries={[{ pathname: '/unlock/f1', state }]}>
       <Routes>
         <Route path="/unlock/:fileId" element={<Unlock />} />
         <Route path="/vault" element={<div>VAULT OPEN</div>} />
@@ -73,6 +73,18 @@ describe('Unlock', () => {
     expect(await screen.findByText('VAULT OPEN')).toBeInTheDocument()
     expect(api.biometric.unlock).toHaveBeenCalledTimes(1)
     expect(api.biometric.unlock).toHaveBeenCalledWith('f1')
+  })
+
+  it('does not prompt Touch ID after the vault locked', async () => {
+    api.biometric.available.mockResolvedValue(true)
+    api.biometric.enabled.mockResolvedValue(true)
+    api.biometric.unlock.mockResolvedValue(snapshot)
+    renderUnlock({ locked: true })
+    const button = await screen.findByRole('button', { name: /Touch ID/ })
+    expect(api.biometric.unlock).not.toHaveBeenCalled()
+    await userEvent.click(button)
+    await screen.findByText('VAULT OPEN')
+    expect(api.biometric.unlock).toHaveBeenCalledTimes(1)
   })
 
   it('offers Touch ID enrolment after a password unlock', async () => {

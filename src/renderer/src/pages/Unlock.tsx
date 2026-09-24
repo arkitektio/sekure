@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Eye, EyeOff, FileKey2, Fingerprint, Loader2, X } from 'lucide-react'
 import { SourceIcon } from '@/components/SourceIcon'
 import { SekureLogo } from '@/components/SekureLogo'
@@ -10,12 +10,15 @@ import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useVault } from '@/stores/vault'
 import { api, displayError, errorCode } from '@/lib/api'
+import type { UnlockState } from '@/lib/vaults'
 import type { VaultSnapshot } from '../../../main/vault/protocol'
 import type { VaultRef } from '../../../main/sources/protocol'
 
 export function Unlock() {
   const { fileId = '' } = useParams()
   const navigate = useNavigate()
+  // After a lock the screen waits for the user: no Touch ID prompt out of nowhere.
+  const afterLock = (useLocation().state as UnlockState | null)?.locked === true
   const setSnapshot = useVault((s) => s.setSnapshot)
   const reset = useVault((s) => s.reset)
 
@@ -28,7 +31,7 @@ export function Unlock() {
   const [bioAvailable, setBioAvailable] = useState(false)
   const [bioEnabled, setBioEnabled] = useState(false)
   const [enableBio, setEnableBio] = useState(true)
-  const autoPrompted = useRef(false)
+  const autoPrompted = useRef(afterLock)
   const passwordRef = useRef<HTMLInputElement>(null)
   const keyInputRef = useRef<HTMLInputElement>(null)
 

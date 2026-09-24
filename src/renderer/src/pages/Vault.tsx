@@ -8,7 +8,7 @@ import { api } from '@/lib/api'
 import { VaultLayout } from '@/vault/layout/VaultLayout'
 import { TabPage } from '@/vault/pages/TabPage'
 import { useVaultActions } from '@/vault/useVaultActions'
-import { unlockPath } from '@/lib/vaults'
+import { LOCKED_STATE, unlockPath } from '@/lib/vaults'
 
 const ACTIVITY_THROTTLE_MS = 15_000
 
@@ -59,7 +59,9 @@ export function Vault() {
           } else if (event.reason !== 'manual') {
             toast.info(event.reason === 'idle' ? 'Locked after inactivity' : 'Locked with your Mac')
           }
-          navigate(target, { replace: true })
+          // Switching to another vault offers Touch ID there; locking this one does not.
+          const relock = current && target === unlockPath(current.fileId)
+          navigate(target, { replace: true, state: relock ? LOCKED_STATE : undefined })
         }
       }),
     [navigate, reset, setSnapshot]

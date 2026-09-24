@@ -6,7 +6,7 @@ export interface VaultSettings {
   lockOnSleep: boolean
 }
 
-export const DEFAULT_VAULT_SETTINGS: VaultSettings = { autoLockMinutes: 10, lockOnSleep: true }
+export const DEFAULT_VAULT_SETTINGS: VaultSettings = { autoLockMinutes: 5, lockOnSleep: true }
 
 export const MAX_AUTO_LOCK_MINUTES = 24 * 60
 

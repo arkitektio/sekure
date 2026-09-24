@@ -14,6 +14,7 @@ import { Separator } from '@/components/ui/separator'
 import { BrandCustomizer } from '@/components/BrandCustomizer'
 import { SmartSearchSettings } from '@/components/SmartSearchSettings'
 import { DeidentifySettings } from '@/components/DeidentifySettings'
+import { LockSettings } from '@/components/LockSettings'
 import { UpdateSettings } from '@/components/UpdateSettings'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -243,6 +244,8 @@ export function SettingsButton() {
               )}
             </section>
           )}
+          <Separator />
+          <LockSettings />
           <Separator />
           <SmartSearchSettings />
           <Separator />
