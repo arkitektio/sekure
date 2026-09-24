@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/arkitektio/sekure/compare/v1.0.0...v1.1.0) (2026-09-24)
+
+
+### Features
+
+* with recycle bin ([a54f075](https://github.com/arkitektio/sekure/commit/a54f0753a4cf75670a53fe9b79d945075b580632))
+
 # 1.0.0 (2026-09-24)
 
 
