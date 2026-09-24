@@ -1,0 +1,51 @@
+appId: io.jhnnsrs.sekure
+productName: Sekure
+electronVersion: 43.1.0
+electronLanguages: ['en', 'en-US']
+publish:
+  provider: github
+  owner: jhnnsrs
+  repo: sekure
+  releaseType: release
+# "next" rides the standard beta.yml carrier (see AppUpdater.ts).
+generateUpdatesFilesForAllChannels: true
+directories:
+  buildResources: build
+# Everything the main process needs is bundled into out/ (externalizeDeps:
+# false in electron.vite.config.ts), so no node_modules ship in the asar.
+files:
+  - out/**/*
+  - package.json
+  - '!**/node_modules/**/*'
+asar: true
+# onnxruntime-web imports and reads its WASM runtime from disk (smart search).
+asarUnpack:
+  - out/main/ort/**
+win:
+  executableName: sekure
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+mac:
+  # zip is required for electron-updater on macOS
+  target: [dmg, zip]
+  category: public.app-category.productivity
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: true
+  extendInfo:
+    NSAppleEventsUsageDescription: Sekure presses ⌘V in the app you were typing in to auto-type a field.
+dmg:
+  artifactName: ${name}-${version}.${ext}
+  sign: true
+linux:
+  target: [AppImage, deb]
+  maintainer: jhnnsrs
+  category: Utility
+appImage:
+  artifactName: ${name}-${version}.${ext}
+afterPack: scripts/remove-locales.cjs

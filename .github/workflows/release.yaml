@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    branches: [main, next]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  semantic-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 } # semantic-release needs full history
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'pnpm' }
+      - run: pnpm install --frozen-lockfile
+      - name: Run semantic-release
+        env:
+          # A PAT, not GITHUB_TOKEN: releases created with GITHUB_TOKEN do not
+          # trigger other workflows, and publishall.yaml listens for them.
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: pnpm exec semantic-release
