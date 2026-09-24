@@ -1,23 +1,34 @@
 import { cn } from '@/lib/utils'
 
-// The "Keyhole S" (masters in build/logo.svg and build/logo-mark.svg). Inline, so it
+// The "Keyhole S": an S on its side whose first bowl closes into a key's bow, with a
+// keyhole in it (masters in build/logo.svg and build/logo-mark.svg). Inline, so it
 // needs no asset and follows the live brand colour.
-const S_PATH = 'M 635.6 350.9 A 128 128 0 1 0 512 512 A 144 144 0 1 1 372.9 693.3'
-const KEYHOLE = 'M 501 654 L 494 714 L 530 714 L 523 654 Z'
+const S_PATH =
+  'M 635.6 350.9 A 128 128 0 1 0 512 512 A 144 144 0 1 1 372.9 693.3 A 144 144 0 0 1 512 512'
+const KEYHOLE = 'M 357 498 L 350 558 L 386 558 L 379 498 Z'
+/** A macOS-style continuous-curvature squircle (superellipse, n = 5). */
+const SQUIRCLE =
+  'M1024 512L1024 628L1024 665L1023 692L1023 714L1022 733L1022 750L1021 765L1020 778L1019 791L1018 803L1016 814L1015 824L1014 834L1012 843L1010 852L1008 861L1006 869L1004 876L1001 884L999 891L996 898L994 904L991 911L988 917L984 923L981 928L978 934L974 939L970 944L966 949L962 953L958 958L953 962L949 966L944 970L939 974L934 978L928 981L923 984L917 988L911 991L904 994L898 996L891 999L884 1001L876 1004L869 1006L861 1008L852 1010L843 1012L834 1014L824 1015L814 1016L803 1018L791 1019L778 1020L765 1021L750 1022L733 1022L714 1023L692 1023L665 1024L628 1024L512 1024L396 1024L359 1024L332 1023L310 1023L291 1022L274 1022L259 1021L246 1020L233 1019L221 1018L210 1016L200 1015L190 1014L181 1012L172 1010L163 1008L155 1006L148 1004L140 1001L133 999L126 996L120 994L113 991L107 988L101 984L96 981L90 978L85 974L80 970L75 966L71 962L66 958L62 953L58 949L54 944L50 939L46 934L43 928L40 923L36 917L33 911L30 904L28 898L25 891L23 884L20 876L18 869L16 861L14 852L12 843L10 834L9 824L8 814L6 803L5 791L4 778L3 765L2 750L2 733L1 714L1 692L0 665L0 628L0 512L0 396L0 359L1 332L1 310L2 291L2 274L3 259L4 246L5 233L6 221L8 210L9 200L10 190L12 181L14 172L16 163L18 155L20 148L23 140L25 133L28 126L30 120L33 113L36 107L40 101L43 96L46 90L50 85L54 80L58 75L62 71L66 66L71 62L75 58L80 54L85 50L90 46L96 43L101 40L107 36L113 33L120 30L126 28L133 25L140 23L148 20L155 18L163 16L172 14L181 12L190 10L200 9L210 8L221 6L233 5L246 4L259 3L274 2L291 2L310 1L332 1L359 0L396 0L512 0L628 0L665 0L692 1L714 1L733 2L750 2L765 3L778 4L791 5L803 6L814 8L824 9L834 10L843 12L852 14L861 16L869 18L876 20L884 23L891 25L898 28L904 30L911 33L917 36L923 40L928 43L934 46L939 50L944 54L949 58L953 62L958 66L962 71L966 75L970 80L974 85L978 90L981 96L984 101L988 107L991 113L994 120L996 126L999 133L1001 140L1004 148L1006 155L1008 163L1010 172L1012 181L1014 190L1015 200L1016 210L1018 221L1019 233L1020 246L1021 259L1022 274L1022 291L1023 310L1023 332L1024 359L1024 396Z'
 
 function Glyph() {
   return (
     <>
-      <path d={S_PATH} fill="none" stroke="currentColor" strokeWidth={100} />
+      <path
+        d={S_PATH}
+        transform="rotate(90 512 512)"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={100}
+      />
       <g fill="currentColor">
-        <circle cx={512} cy={640} r={31} />
+        <circle cx={368} cy={484} r={31} />
         <path d={KEYHOLE} />
       </g>
     </>
   )
 }
 
-/** The app mark on its tile, flat in the brand colour. */
+/** The app mark on its macOS-style squircle, flat in the brand colour. */
 export function SekureLogo({ className }: { className?: string }) {
   return (
     <svg
@@ -26,7 +37,7 @@ export function SekureLogo({ className }: { className?: string }) {
       aria-label="Sekure"
       className={cn('size-24 text-white', className)}
     >
-      <rect width={1024} height={1024} rx={82} className="fill-primary" />
+      <path d={SQUIRCLE} className="fill-primary" />
       <Glyph />
     </svg>
   )
@@ -35,7 +46,7 @@ export function SekureLogo({ className }: { className?: string }) {
 /** The glyph alone, in `currentColor`. */
 export function SekureMark({ className }: { className?: string }) {
   return (
-    <svg viewBox="310 196 404 664" aria-hidden className={cn('h-5 w-auto', className)}>
+    <svg viewBox="164 310 664 404" aria-hidden className={cn('h-4 w-auto', className)}>
       <Glyph />
     </svg>
   )
