@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { SourceIcon } from '@/components/SourceIcon'
 import { VaultAvatar } from '@/components/VaultAvatar'
+import { SekureLogo } from '@/components/SekureLogo'
 import { useAuth } from '@/stores/auth'
 import { api, displayError } from '@/lib/api'
 import { isLocalId, unlockPath, useOpenLocalVault } from '@/lib/vaults'
@@ -118,9 +119,7 @@ function Welcome({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-full w-full flex-col items-center justify-center overflow-y-auto bg-radial-[at_100%_100%] from-primary/8 to-background px-4 py-8">
       <div className="flex w-full max-w-xl flex-col items-center gap-6">
-        <div className="grid size-24 place-items-center rounded-[1.75rem] bg-primary text-primary-foreground shadow-lg">
-          <ShieldCheck className="size-12" strokeWidth={1.75} />
-        </div>
+        <SekureLogo className="size-24" />
 
         {children}
 

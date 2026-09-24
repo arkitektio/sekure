@@ -120,6 +120,8 @@ export class WindowManager implements AppModule {
       if (this.mainWindow && !(canGlass && this.chrome.get('glass')))
         this.mainWindow.setBackgroundColor(solidBackground())
     })
+    // Packaged builds take the icon from the bundle; in dev the Dock would show Electron's.
+    if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(icon)
     this.createMainWindow()
   }
 

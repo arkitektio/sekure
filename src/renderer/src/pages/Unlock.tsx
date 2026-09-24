@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Eye, EyeOff, FileKey2, Fingerprint, Loader2, Lock, X } from 'lucide-react'
+import { ArrowLeft, Eye, EyeOff, FileKey2, Fingerprint, Loader2, X } from 'lucide-react'
 import { SourceIcon } from '@/components/SourceIcon'
+import { SekureLogo } from '@/components/SekureLogo'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -131,9 +132,7 @@ export function Unlock() {
         </Button>
 
         <div className="mb-6 flex flex-col items-center text-center">
-          <div className="mb-4 grid size-14 place-items-center rounded-2xl bg-primary/10 text-primary">
-            <Lock className="size-6" />
-          </div>
+          <SekureLogo className="mb-4 size-16" />
           <h1 className="text-xl font-semibold tracking-tight">
             {ref?.name ?? <span className="text-muted-foreground">Loading…</span>}
           </h1>

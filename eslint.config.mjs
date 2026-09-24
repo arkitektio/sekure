@@ -38,5 +38,10 @@ export default defineConfig(
     files: ['**/*.cjs'],
     rules: { '@typescript-eslint/no-require-imports': 'off' }
   },
+  {
+    // Plain Node build scripts: no TypeScript to annotate return types in.
+    files: ['scripts/**/*.{cjs,mjs}'],
+    rules: { '@typescript-eslint/explicit-function-return-type': 'off' }
+  },
   eslintConfigPrettier
 )

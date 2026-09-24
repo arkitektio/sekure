@@ -19,6 +19,7 @@
     "start": "electron-vite preview",
     "dev": "cross-env NO_SANDBOX=1 electron-vite dev",
     "build": "electron-vite build",
+    "icons": "node scripts/build-icons.mjs",
     "postinstall": "node node_modules/electron/install.js && electron-builder install-app-deps",
     "build:unpack": "pnpm run build && electron-builder --dir",
     "build:win": "pnpm run build && electron-builder --win",
