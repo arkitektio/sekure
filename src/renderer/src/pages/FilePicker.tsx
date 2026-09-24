@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
+  ArrowLeft,
   Clock,
   Cloud,
   FileLock2,
@@ -105,7 +106,15 @@ export function FilePicker() {
   }
 
   return (
-    <div className="mx-auto flex h-full max-w-2xl flex-col px-6 pt-8">
+    <div className="mx-auto flex h-full max-w-2xl flex-col px-6 pt-6">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="mb-4 self-start text-muted-foreground"
+        onClick={() => navigate('/')}
+      >
+        <ArrowLeft /> Back
+      </Button>
       <div className="flex items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Choose a vault</h1>

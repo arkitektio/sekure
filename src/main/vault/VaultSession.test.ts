@@ -304,8 +304,90 @@ describe('searchDocuments', () => {
     expect(gmail.fieldNames).toEqual(['Recovery']) // the otp field is left out
 
     const visa = docs.find((d) => d.title === 'Visa')!
-    expect(visa).toMatchObject({ type: 'Credit card', notes: 'Travel card', tags: ['finance'] })
+    expect(visa).toMatchObject({ type: 'Payment card', notes: 'Travel card', tags: ['finance'] })
     expect(visa.fieldNames).toEqual(expect.arrayContaining(['Card number', 'CVV', 'Card issuer']))
+  })
+})
+
+describe('people', () => {
+  const blank = { title: '', username: '', url: '', notes: '', tags: [] as string[] }
+  const person = (s: VaultSession, given: string, surname: string) =>
+    s.createEntry(undefined, {
+      ...blank,
+      type: 'personalDetails',
+      customFields: [
+        { key: 'Given names', value: given, protected: false },
+        { key: 'Surname', value: surname, protected: false }
+      ]
+    })
+  const summary = (s: VaultSession, uuid: string) =>
+    s.snapshot().entries.find((e) => e.uuid === uuid)!
+
+  it('links entries to Person entries through CustomData, and it survives a save', async () => {
+    const session = await open(await makeFile())
+    const jane = person(session, 'Jane', 'Doe')
+    const passport = session.createEntry(undefined, {
+      ...blank,
+      type: 'passport',
+      people: [jane]
+    })
+    expect(summary(session, passport).people).toEqual([jane])
+
+    const reloaded = await open(await session.save())
+    expect(summary(reloaded, passport).people).toEqual([jane])
+    const raw = [...reloaded.db.getDefaultGroup().allEntries()].find((e) => e.uuid.id === passport)!
+    expect(raw.customData?.get('sekure.people')?.value).toBe(jane)
+  })
+
+  it('drops links to anything that is not a Person, and to itself', async () => {
+    const session = await open(await makeFile())
+    const jane = person(session, 'Jane', 'Doe')
+    const gmail = session.snapshot().entries.find((e) => e.title === 'Gmail')!.uuid
+    session.setPeople(gmail, [jane, gmail, 'bogus', jane])
+    expect(summary(session, gmail).people).toEqual([jane])
+    session.setPeople(jane, [jane])
+    expect(summary(session, jane).people).toEqual([])
+    expect(() => session.setPeople(gmail, Array(51).fill(jane))).toThrow(VaultError)
+  })
+
+  it('records a history step, and forgets links once the person is gone', async () => {
+    const session = await open(await makeFile())
+    const jane = person(session, 'Jane', 'Doe')
+    const gmail = session.snapshot().entries.find((e) => e.title === 'Gmail')!.uuid
+    session.setPeople(gmail, [jane])
+    const raw = [...session.db.getDefaultGroup().allEntries()].find((e) => e.uuid.id === gmail)!
+    expect(raw.history.length).toBe(1)
+    // Unchanged links are not another history step.
+    session.setPeople(gmail, [jane])
+    expect(raw.history.length).toBe(1)
+
+    // Changed into something else: no longer a person, so the link goes.
+    session.updateEntry(jane, { ...blank, type: 'secureNote' })
+    expect(summary(session, gmail).people).toEqual([])
+  })
+
+  it('keeps links when a remote copy wins the merge', async () => {
+    const original = await makeFile()
+    const local = await open(original)
+    const remote = await open(original)
+    const gmail = local.snapshot().entries[0].uuid
+
+    await new Promise((r) => setTimeout(r, 5))
+    const jane = person(remote, 'Jane', 'Doe')
+    remote.setPeople(gmail, [jane])
+    local.merge(await kdbxweb.Kdbx.load(await remote.save(), makeCredentials('hunter2')))
+
+    const merged = await open(await local.save())
+    expect(summary(merged, gmail).people).toEqual([jane])
+  })
+
+  it('indexes the names of linked people for search', async () => {
+    const session = await open(await makeFile())
+    const jane = person(session, 'Jane', 'Doe')
+    const gmail = session.snapshot().entries.find((e) => e.title === 'Gmail')!.uuid
+    session.setPeople(gmail, [jane])
+    const doc = session.searchDocuments().find((d) => d.uuid === gmail)!
+    expect(doc.people).toEqual(['Jane Doe'])
   })
 })
 

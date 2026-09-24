@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Copy, ExternalLink, Eye, EyeOff, Pencil, Trash2, Upload } from 'lucide-react'
+import { Copy, ExternalLink, Eye, EyeOff, Pencil, Plus, Trash2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -16,12 +16,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
-import { useVault } from '@/stores/vault'
+import { ALL_ENTRIES, useVault } from '@/stores/vault'
 import { api, displayError, entryTitle, formatDate } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { renderSummaryIcon } from './icons'
 import { countryName, expiryStatus, flag, formatDay, type ExpiryStatus } from './typedValues'
-import { getType, loginType, type EntryType, type TypeField } from '../../../main/vault/entryTypes'
+import {
+  getType,
+  loginType,
+  PERSON_TYPE,
+  type EntryType,
+  type TypeField
+} from '../../../main/vault/entryTypes'
+import { EntryPeople } from './PeoplePicker'
+import { linkedTo, personFilterId } from './people'
+import { clickOptions } from './tabs'
 import { Attachments, attachFiles } from './Attachments'
 import type { TotpCode, VaultEntryDetail } from '../../../main/vault/protocol'
 
@@ -186,10 +195,72 @@ function OtpRow({ uuid }: { uuid: string }) {
   )
 }
 
+/** On a Person's page: what belongs to them, by type. */
+function PersonItems({ person }: { person: string }) {
+  const snapshot = useVault((s) => s.snapshot)
+  const selectEntry = useVault((s) => s.selectEntry)
+  const selectGroup = useVault((s) => s.selectGroup)
+  const items = linkedTo(snapshot, person).sort(
+    (a, b) => a.type.localeCompare(b.type) || a.title.localeCompare(b.title)
+  )
+  return (
+    <section className="mt-6" aria-label="Items">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-xs font-medium text-muted-foreground uppercase">
+          Items <span className="tabular-nums">{items.length}</span>
+        </h3>
+        <div className="flex gap-1">
+          {items.length > 0 && (
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={(e) => selectGroup(personFilterId(person), clickOptions(e))}
+            >
+              Show all
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={() => {
+              // The wizard, with this person preset.
+              useVault.getState().open({ kind: 'create', people: [person] })
+            }}
+          >
+            <Plus /> Add
+          </Button>
+        </div>
+      </div>
+      {items.length === 0 ? (
+        <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+          Nothing linked yet. Link documents and logins from their page, or add one here.
+        </p>
+      ) : (
+        <ul className="divide-y rounded-xl border bg-card">
+          {items.map((e) => (
+            <li key={e.uuid}>
+              <button
+                onClick={(ev) => selectEntry(e.uuid, clickOptions(ev))}
+                onAuxClick={(ev) => ev.button === 1 && selectEntry(e.uuid, clickOptions(ev))}
+                className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm first:rounded-t-xl last:rounded-b-xl hover:bg-muted/60"
+              >
+                <span className="text-muted-foreground">{renderSummaryIcon(e, 'size-4')}</span>
+                <span className="min-w-0 flex-1 truncate">{entryTitle(e)}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {getType(e.type)?.label}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 export function EntryDetail({ uuid }: { uuid: string }) {
   const snapshot = useVault((s) => s.snapshot)
   const setEditing = useVault((s) => s.setEditing)
-  const select = useVault((s) => s.selectEntry)
   const [entry, setEntry] = useState<VaultEntryDetail>()
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -236,7 +307,11 @@ export function EntryDetail({ uuid }: { uuid: string }) {
   const remove = async () => {
     try {
       await api.vault.deleteEntry(uuid)
-      select(undefined)
+      // Back to where the entry was opened from (usually its list).
+      const { tabs, activeTab, back, replace } = useVault.getState()
+      const tab = tabs.find((t) => t.id === activeTab)
+      if (tab && tab.index > 0) back()
+      else replace({ kind: 'list', scope: ALL_ENTRIES })
       toast.success('Moved to recycle bin')
     } catch (e) {
       toast.error(displayError(e))
@@ -295,6 +370,7 @@ export function EntryDetail({ uuid }: { uuid: string }) {
               <Trash2 />
             </Button>
           </div>
+          <EntryPeople uuid={uuid} />
 
           {/* Keyed by modification time: a merge or edit re-masks revealed values. */}
           {type.id === 'login' ? (
@@ -333,6 +409,8 @@ export function EntryDetail({ uuid }: { uuid: string }) {
               </p>
             </section>
           )}
+
+          {type.id === PERSON_TYPE && <PersonItems person={uuid} />}
 
           <div className="mt-6">
             <Attachments entryUuid={uuid} attachments={entry.attachments} />
@@ -514,6 +592,7 @@ function FieldValue({ field, value }: { field: TypeField; value: string }) {
     case 'multiline':
       return <span className="font-mono text-xs break-all whitespace-pre-wrap">{value}</span>
     default:
+      if (field.formats) return <span className="font-mono tracking-wide">{value}</span>
       return field.standard === 'URL' ? (
         <span className="truncate text-primary">{value}</span>
       ) : (

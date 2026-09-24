@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '@/lib/api'
 import type { SearchHit, SemanticStatus } from '../../../main/search/protocol'
-import { getType } from '../../../main/vault/entryTypes'
+import { getType, suggestNewEntries, type NewEntrySuggestion } from '../../../main/vault/entryTypes'
 import type { VaultEntrySummary, VaultSnapshot } from '../../../main/vault/protocol'
 
 export interface RankedHit extends SearchHit {
@@ -57,6 +57,55 @@ export function useSearch(
   }, [q, snapshot, statusKey])
 
   return q && hits ? hits.map : undefined
+}
+
+const MAX_SUGGESTIONS = 4
+
+/**
+ * “Add …” suggestions for a query: recognised numbers and matching type names
+ * right away, then types the local model finds by meaning. Nothing of the vault
+ * is involved, only the query and the type registry.
+ */
+export function useNewEntrySuggestions(query: string): NewEntrySuggestion[] {
+  const q = query.trim()
+  const local = useMemo(() => (q ? suggestNewEntries(q) : []), [q])
+  const [semantic, setSemantic] = useState<{ query: string; typeIds: string[] }>()
+  // A recognised number already says what to create; meaning adds nothing there.
+  const recognised = local.some((s) => s.via === 'id')
+
+  useEffect(() => {
+    if (!q || recognised) return
+    let alive = true
+    const t = setTimeout(() => {
+      api.search
+        .suggestTypes(q)
+        .then((list) => alive && setSemantic({ query: q, typeIds: list.map((s) => s.typeId) }))
+        .catch(() => {})
+    }, DEBOUNCE_MS)
+    return () => {
+      alive = false
+      clearTimeout(t)
+    }
+  }, [q, recognised])
+
+  return useMemo(() => {
+    const out = [...local]
+    if (!recognised && semantic?.query === q) {
+      for (const typeId of semantic.typeIds) {
+        if (!out.some((s) => s.typeId === typeId)) out.push({ typeId, via: 'semantic' })
+      }
+    }
+    return out.slice(0, MAX_SUGGESTIONS)
+  }, [q, local, recognised, semantic])
+}
+
+/** `Add tax ID` / `“12-3456789” · US EIN` for a suggestion row. */
+export function describeSuggestion(s: NewEntrySuggestion): { title: string; detail?: string } {
+  const label = getType(s.typeId)?.label ?? s.typeId
+  const title = `Add ${s.typeId === 'login' ? 'login' : label}`
+  if (s.via !== 'id' || !s.prefill) return { title }
+  const value = Object.values(s.prefill)[0]
+  return { title, detail: `“${value}” · ${s.detail}` }
 }
 
 /** Plain substring match, used until the first ranked answer arrives from main. */

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, readdir, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ensureModel, hasModel, modelUrl } from './modelStore'
+import { assertPinned, ensureModel, hasModel, modelUrl } from './modelStore'
 import type { ModelSpec } from './spec'
 
 // Small fake files stand in for a model so the test stays fast.
@@ -72,5 +72,18 @@ describe('ensureModel', () => {
     await ensureModel(dir, spec, second)
     // Both tokenizer files were already fine; only the model was fetched again.
     expect(second.mock.calls.map((c) => c[0])).toEqual([urlOf('onnx/model_quantized.onnx')])
+  })
+})
+
+describe('assertPinned', () => {
+  it('accepts the pinned bytes, as text or binary', () => {
+    expect(() => assertPinned(spec, 'tokenizer.json', files['tokenizer.json'])).not.toThrow()
+    const bytes = new TextEncoder().encode(files['onnx/model_quantized.onnx'])
+    expect(() => assertPinned(spec, 'onnx/model_quantized.onnx', bytes)).not.toThrow()
+  })
+
+  it('rejects changed or unknown files', () => {
+    expect(() => assertPinned(spec, 'tokenizer.json', '{"tok":false}')).toThrow(/integrity/)
+    expect(() => assertPinned(spec, 'evil.onnx', 'x')).toThrow(/not part of/)
   })
 })

@@ -6,7 +6,6 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
 import { AppShell } from '@/app/AppShell'
 import { Home } from '@/pages/Home'
-import { Connect } from '@/pages/Connect'
 import { FilePicker } from '@/pages/FilePicker'
 import { Unlock } from '@/pages/Unlock'
 import { Vault } from '@/pages/Vault'
@@ -67,7 +66,8 @@ export default function App() {
             <Route path="/deidentify" element={<Deidentify />} />
             <Route element={<MainLayout />}>
               <Route path="/" element={<Home />} />
-              <Route path="/connect" element={<Connect />} />
+              {/* The welcome screen connects Google Drive now. */}
+              <Route path="/connect" element={<Navigate to="/" replace />} />
               <Route path="/files" element={<FilePicker />} />
               <Route path="/unlock/:fileId" element={<Unlock />} />
               <Route path="/vault" element={<Vault />} />

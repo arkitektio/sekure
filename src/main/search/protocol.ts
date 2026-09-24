@@ -8,20 +8,28 @@ export interface SearchHit {
   match: 'text' | 'semantic'
 }
 
-export type SemanticState = 'off' | 'downloading' | 'loading' | 'indexing' | 'ready' | 'error'
+/** An entry type whose meaning matches a search, for “Add …” suggestions. */
+export interface TypeSuggestion {
+  typeId: string
+  score: number
+}
+
+export type SemanticState = 'off' | 'loading' | 'indexing' | 'ready' | 'error'
 
 export interface SemanticStatus {
   state: SemanticState
-  /** 0–1 while downloading or indexing. */
+  /** 0–1 while indexing. */
   progress?: number
   message?: string
-  /** Download size of the model, for the opt-in prompt. */
-  downloadBytes: number
 }
 
 export const SEARCH_STATUS_CHANNEL = 'search:status-changed'
 
-/** The embedding model, pinned to a revision; every file is checked against its sha256. */
+/**
+ * The embedding model, pinned to a revision. It ships inside the (signed) app: the build
+ * fetches and verifies it (`electron.vite.config.ts`), and the worker checks every file
+ * against its sha256 again before running it.
+ */
 export const MODEL = {
   id: 'multilingual-e5-small',
   repo: 'Xenova/multilingual-e5-small',

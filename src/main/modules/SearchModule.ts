@@ -1,23 +1,23 @@
 import { join } from 'path'
-import { net } from 'electron'
 import log from 'electron-log'
 import Store from 'electron-store'
 import { AppModule } from './AppModule'
-import { modelsRoot, ortWasmPaths } from './modelPaths'
+import { bundledModelDir, modelsRoot, ortWasmPaths } from './modelPaths'
 import { IpcTransport } from './IpcTransport'
 import { WindowManager } from './WindowManager'
 import { VaultModule } from './VaultModule'
 import { SearchIndex } from '../search/SearchIndex'
+import { TypeIndex } from '../search/TypeIndex'
 import type { Embedder } from '../search/SearchIndex'
 import type { EmbedRequest } from '../search/embedder.worker'
 import { WorkerClient } from '../models/WorkerClient'
-import { ensureModel, hasModel, modelDir, removeModel } from '../models/modelStore'
-import { modelBytes } from '../models/spec'
+import { hasModel, removeModel } from '../models/modelStore'
 import {
   MODEL,
   SEARCH_STATUS_CHANNEL,
   type SearchHit,
-  type SemanticStatus
+  type SemanticStatus,
+  type TypeSuggestion
 } from '../search/protocol'
 import createEmbedderWorker from '../search/embedder.worker?nodeWorker'
 
@@ -36,23 +36,24 @@ interface SearchSettings {
 }
 
 /**
- * Vault search: lexical always, plus a local embedding model once the user opts
- * in (downloaded once, then offline). The index and its vectors live in memory
- * only and are dropped on lock; the model runs in a worker thread.
+ * Vault search: lexical always, plus a local embedding model that ships inside the
+ * signed app (on unless the user turns it off). The worker checks the model files
+ * against their sha256 pins before running them. The index and its vectors live in
+ * memory only and are dropped on lock; the model runs in a worker thread.
  */
 export class SearchModule implements AppModule {
   private settings = new Store<SearchSettings>({
     name: 'search',
-    defaults: { semantic: false }
+    defaults: { semantic: true }
   })
   private index = new SearchIndex((done, total) =>
     this.setStatus(
       done < total ? { state: 'indexing', progress: done / total } : { state: 'ready' }
     )
   )
+  private types = new TypeIndex()
   private embedder: EmbedderWorker | undefined
-  private status: SemanticStatus = { state: 'off', downloadBytes: modelBytes(MODEL) }
-  private enabling: Promise<void> | undefined
+  private status: SemanticStatus = { state: 'off' }
 
   constructor(
     private ipc: IpcTransport,
@@ -61,7 +62,7 @@ export class SearchModule implements AppModule {
   ) {}
 
   private get modelDir() {
-    return modelDir(modelsRoot(), MODEL)
+    return bundledModelDir(MODEL)
   }
 
   async setup() {
@@ -69,9 +70,11 @@ export class SearchModule implements AppModule {
     // Typing a search is user input, but the renderer already reports that via
     // `vault:activity`; this handler must not keep the vault unlocked by itself.
     h('search:query', (_e, query: string): Promise<SearchHit[]> => this.index.search(query))
+    // Same for “Add …” suggestions: polled per keystroke, never resets the idle timer.
+    h('search:suggestTypes', (_e, query: unknown) => this.suggestTypes(query))
     h('search:status', () => this.status)
     h('search:enableSemantic', () => this.enable())
-    h('search:disableSemantic', (_e, removeFiles: boolean) => this.disable(removeFiles))
+    h('search:disableSemantic', () => this.disable())
 
     this.vault.onEvent((event) => {
       if (event.type === 'opened') {
@@ -85,47 +88,37 @@ export class SearchModule implements AppModule {
       }
     })
 
-    if (this.settings.get('semantic')) {
-      this.setStatus(
-        (await hasModel(this.modelDir, MODEL))
-          ? { state: 'ready' }
-          : { state: 'error', message: 'The search model is missing. Enable smart search again.' }
-      )
-    }
+    if (this.settings.get('semantic')) this.setStatus(await this.bundledStatus())
+    // Older versions downloaded the model into userData; the app carries it now.
+    void removeModel(join(modelsRoot(), MODEL.id)).catch(() => {})
+  }
+
+  /** `ready`, or an error when the build shipped without the model (never in a release). */
+  private async bundledStatus(): Promise<SemanticStatus> {
+    return (await hasModel(this.modelDir, MODEL))
+      ? { state: 'ready' }
+      : { state: 'error', message: 'This build of Sekure ships without the search model.' }
+  }
+
+  private async suggestTypes(query: unknown): Promise<TypeSuggestion[]> {
+    if (typeof query !== 'string' || query.length > 200 || !this.types.ready) return []
+    const qv = await this.index.queryVector(query)
+    return qv ? this.types.suggest(qv) : []
   }
 
   async onBeforeQuit() {
     await this.stopEmbedder()
   }
 
-  private enable(): Promise<void> {
-    this.enabling ??= (async () => {
-      try {
-        this.setStatus({ state: 'downloading', progress: 0 })
-        await ensureModel(
-          this.modelDir,
-          MODEL,
-          (url) => net.fetch(url),
-          (progress) => this.setStatus({ state: 'downloading', progress })
-        )
-        this.settings.set('semantic', true)
-        this.setStatus({ state: 'ready' })
-        if (this.vault.isOpen) await this.startEmbedder()
-      } catch (e) {
-        log.error('Enabling smart search failed', e)
-        this.setStatus({ state: 'error', message: e instanceof Error ? e.message : String(e) })
-        throw e
-      } finally {
-        this.enabling = undefined
-      }
-    })()
-    return this.enabling
+  private async enable() {
+    this.settings.set('semantic', true)
+    this.setStatus(await this.bundledStatus())
+    if (this.status.state === 'ready' && this.vault.isOpen) await this.startEmbedder()
   }
 
-  private async disable(removeFiles: boolean) {
+  private async disable() {
     this.settings.set('semantic', false)
     await this.stopEmbedder()
-    if (removeFiles) await removeModel(join(modelsRoot(), MODEL.id))
     this.setStatus({ state: 'off' })
   }
 
@@ -133,7 +126,10 @@ export class SearchModule implements AppModule {
     if (this.embedder) return
     this.setStatus({ state: 'loading' })
     const embedder = new EmbedderWorker(
-      createEmbedderWorker({ workerData: { modelDir: this.modelDir, wasmPaths: ortWasmPaths() } })
+      createEmbedderWorker({
+        // `spec`: the worker refuses files that don't match their sha256 pins.
+        workerData: { modelDir: this.modelDir, wasmPaths: ortWasmPaths(), spec: MODEL }
+      })
     )
     this.embedder = embedder
     try {
@@ -143,26 +139,29 @@ export class SearchModule implements AppModule {
       log.error('Loading the search model failed', e)
       this.embedder = undefined
       await embedder.terminate()
-      this.setStatus({ state: 'error', message: 'The search model could not be loaded.' })
+      this.setStatus({
+        state: 'error',
+        message: 'The search model could not be loaded or failed its integrity check.'
+      })
       return
     }
     if (this.embedder !== embedder) return // locked meanwhile
-    await this.index.setEmbedder(embedder)
+    await Promise.all([this.index.setEmbedder(embedder), this.types.setEmbedder(embedder)])
     if (this.embedder === embedder) this.setStatus({ state: 'ready' })
   }
 
   private async stopEmbedder() {
     const embedder = this.embedder
     this.embedder = undefined
-    await this.index.setEmbedder(undefined)
+    await Promise.all([this.index.setEmbedder(undefined), this.types.setEmbedder(undefined)])
     if (embedder) await embedder.terminate()
     if (this.settings.get('semantic') && this.status.state !== 'error') {
       this.setStatus({ state: 'ready' })
     }
   }
 
-  private setStatus(s: Omit<SemanticStatus, 'downloadBytes'>) {
-    this.status = { ...s, downloadBytes: modelBytes(MODEL) }
+  private setStatus(s: SemanticStatus) {
+    this.status = s
     this.windows.broadcast(SEARCH_STATUS_CHANNEL, this.status)
   }
 }

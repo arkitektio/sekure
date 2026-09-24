@@ -125,7 +125,7 @@ export function Unlock() {
           variant="ghost"
           size="sm"
           className="mb-6 self-start text-muted-foreground"
-          onClick={() => navigate('/files')}
+          onClick={() => navigate('/')}
         >
           <ArrowLeft /> All vaults
         </Button>

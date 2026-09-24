@@ -3,6 +3,8 @@ import { join } from 'path'
 import { Tokenizer } from '@huggingface/tokenizers'
 import * as ort from 'onnxruntime-web'
 import type { Embedder } from './SearchIndex'
+import { assertPinned } from '../models/modelStore'
+import type { ModelSpec } from '../models/spec'
 
 const MAX_TOKENS = 128
 
@@ -11,6 +13,8 @@ export interface E5Options {
   modelDir: string
   /** Folder (or URL) with ORT's `ort-wasm-simd-threaded.{mjs,wasm}`; default: next to the package. */
   wasmPaths?: string
+  /** When given, every file must match its sha256 pin before the model runs. */
+  spec?: ModelSpec
 }
 
 /**
@@ -18,7 +22,7 @@ export interface E5Options {
  * tokenize with the model's prefixes, run, mean-pool over the attention mask,
  * L2-normalise.
  */
-export async function loadE5({ modelDir, wasmPaths }: E5Options): Promise<Embedder> {
+export async function loadE5({ modelDir, wasmPaths, spec }: E5Options): Promise<Embedder> {
   ort.env.wasm.numThreads = 1
   if (wasmPaths) ort.env.wasm.wasmPaths = wasmPaths
 
@@ -27,6 +31,11 @@ export async function loadE5({ modelDir, wasmPaths }: E5Options): Promise<Embedd
     readFile(join(modelDir, 'tokenizer_config.json'), 'utf8'),
     readFile(join(modelDir, 'onnx', 'model_quantized.onnx'))
   ])
+  if (spec) {
+    assertPinned(spec, 'tokenizer.json', tokenizerJson)
+    assertPinned(spec, 'tokenizer_config.json', configJson)
+    assertPinned(spec, 'onnx/model_quantized.onnx', model)
+  }
   const tokenizer = new Tokenizer(JSON.parse(tokenizerJson), JSON.parse(configJson))
   const session = await ort.InferenceSession.create(model)
   const wantsTypeIds = session.inputNames.includes('token_type_ids')

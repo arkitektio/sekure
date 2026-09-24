@@ -5,6 +5,8 @@ export interface SearchDocument {
   title: string
   /** Entry type label (`Passport`), empty for plain logins. */
   type: string
+  /** The type's registry keywords (`reisepass`, `steuer`): synonyms, never vault data. */
+  typeKeywords?: string[]
   tags: string[]
   /** Group path from the root, e.g. `Finance / Cards`. */
   group: string
@@ -17,6 +19,8 @@ export interface SearchDocument {
   fieldNames: string[]
   /** Start of the (unprotected) notes. */
   notes: string
+  /** Names of the people the entry belongs to (non-secret, like titles). */
+  people?: string[]
   inRecycleBin: boolean
 }
 
@@ -38,10 +42,12 @@ export function passageText(d: SearchDocument): string {
   return [
     d.title,
     d.type,
+    (d.typeKeywords ?? []).join(', '),
     d.subtitle,
     d.host,
     d.username,
     d.group,
+    (d.people ?? []).join(', '),
     d.tags.join(', '),
     d.fieldNames.join(', '),
     d.notes

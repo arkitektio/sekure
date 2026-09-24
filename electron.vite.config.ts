@@ -1,10 +1,14 @@
 import { copyFileSync, mkdirSync } from 'fs'
+import { cp } from 'fs/promises'
 import { resolve } from 'path'
 import { defineConfig } from 'electron-vite'
 import type { Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { CONTENT_SECURITY_POLICY, DEV_CONNECT_SRC } from './src/main/scheme'
+import { MODEL } from './src/main/search/protocol'
+import { ensureModel, hasModel, modelDir } from './src/main/models/modelStore'
+import { modelBytes } from './src/main/models/spec'
 
 /**
  * onnxruntime-web loads its WASM runtime at run time, so ship it next to the
@@ -20,6 +24,30 @@ function copyOrtWasm(): Plugin {
       for (const f of files) {
         copyFileSync(resolve(__dirname, 'node_modules/onnxruntime-web/dist', f), resolve(out, f))
       }
+    }
+  }
+}
+
+/**
+ * Ship the semantic-search model inside the app, so it is covered by the code
+ * signature (and notarization) instead of being downloaded at run time. It is
+ * fetched once into `.cache/models`, checked against the sha256 pins in `MODEL`,
+ * and copied to `out/main/models`, which electron-builder unpacks from the asar.
+ */
+function bundleSearchModel(): Plugin {
+  const cache = modelDir(resolve(__dirname, '.cache/models'), MODEL)
+  return {
+    name: 'sekure:bundle-search-model',
+    async buildStart() {
+      if (await hasModel(cache, MODEL)) return
+      const mb = Math.round(modelBytes(MODEL) / 1024 / 1024)
+      this.info(`downloading ${MODEL.repo}@${MODEL.revision.slice(0, 7)} (${mb} MB)`)
+      await ensureModel(cache, MODEL, (url) => fetch(url))
+    },
+    async writeBundle(options) {
+      const out = modelDir(resolve(options.dir ?? 'out/main', 'models'), MODEL)
+      if (await hasModel(out, MODEL)) return
+      await cp(cache, out, { recursive: true })
     }
   }
 }
@@ -50,7 +78,7 @@ function injectCsp(): Plugin {
 
 export default defineConfig({
   main: {
-    plugins: [copyOrtWasm()],
+    plugins: [copyOrtWasm(), bundleSearchModel()],
     build: {
       // Bundle every dependency into out/main. The main bundle is ESM, and
       // CJS/UMD packages (electron-updater, kdbxweb) expose no named ESM

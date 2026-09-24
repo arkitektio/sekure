@@ -47,8 +47,10 @@ export interface LexicalDoc {
 const WEIGHTS: [keyof SearchDocument, number][] = [
   ['title', 1],
   ['type', 0.8],
+  ['typeKeywords', 0.6],
   ['tags', 0.8],
   ['host', 0.7],
+  ['people', 0.7],
   ['username', 0.6],
   ['url', 0.6],
   ['group', 0.5],

@@ -28,6 +28,8 @@ export interface VaultEntrySummary {
   /** Lives in the recycle bin: hidden from “All entries” and search. */
   inRecycleBin: boolean
   modified: string | undefined
+  /** Uuids of the Person entries this entry belongs to (ids only). */
+  people: string[]
 }
 
 export interface VaultCustomField {
@@ -98,6 +100,8 @@ export interface EntryInput {
   type?: string
   /** Custom fields to set. `value: undefined` on a protected field keeps its current value. */
   customFields?: { key: string; value?: string; protected: boolean }[]
+  /** Person entry uuids to link. `undefined` keeps the current links. */
+  people?: string[]
 }
 
 export interface OpenRequest {

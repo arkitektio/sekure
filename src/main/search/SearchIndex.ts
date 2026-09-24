@@ -33,7 +33,7 @@ interface Indexed {
   text: string
 }
 
-const dot = (a: Float32Array, b: Float32Array) => {
+export const dot = (a: Float32Array, b: Float32Array) => {
   let s = 0
   for (let i = 0; i < a.length; i++) s += a[i] * b[i]
   return s
@@ -46,7 +46,7 @@ const dot = (a: Float32Array, b: Float32Array) => {
 export class SearchIndex {
   private docs = new Map<string, Indexed>()
   private vectors = new Map<string, { text: string; vec: Float32Array }>()
-  private queryCache = new Map<string, Float32Array>()
+  private queryCache = new Map<string, Promise<Float32Array>>()
   private embedder: Embedder | undefined
   private generation = 0
   private indexing: Promise<void> | undefined
@@ -143,21 +143,33 @@ export class SearchIndex {
     return hits
   }
 
-  private async semantic(q: string): Promise<SearchHit[]> {
+  /**
+   * The query's embedding, cached (and shared while in flight), so vault search and
+   * type suggestions for the same keystroke embed it once. Undefined without a model
+   * or for queries too short to mean anything.
+   */
+  async queryVector(query: string): Promise<Float32Array | undefined> {
+    const q = query.trim()
     const embedder = this.embedder
-    if (!embedder || !this.vectors.size) return []
-    if (q.length < SEMANTIC.minQueryLength || !tokenize(q).length) return []
-
+    if (!embedder || q.length < SEMANTIC.minQueryLength || !tokenize(q).length) return undefined
     const gen = this.generation
-    let qv = this.queryCache.get(q)
-    if (!qv) {
-      ;[qv] = await embedder.embed([q], 'query')
-      if (gen !== this.generation) return []
-      this.queryCache.set(q, qv)
+    let pending = this.queryCache.get(q)
+    if (!pending) {
+      pending = embedder.embed([q], 'query').then(([v]) => v)
+      this.queryCache.set(q, pending)
+      pending.catch(() => this.queryCache.get(q) === pending && this.queryCache.delete(q))
       if (this.queryCache.size > QUERY_CACHE) {
         this.queryCache.delete(this.queryCache.keys().next().value!)
       }
     }
+    const qv = await pending
+    return gen === this.generation ? qv : undefined
+  }
+
+  private async semantic(q: string): Promise<SearchHit[]> {
+    if (!this.vectors.size) return []
+    const qv = await this.queryVector(q)
+    if (!qv) return []
 
     const sims: { uuid: string; sim: number }[] = []
     for (const [uuid, { vec }] of this.vectors) {

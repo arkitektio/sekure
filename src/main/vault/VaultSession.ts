@@ -13,6 +13,9 @@ import {
   subtitleFor,
   TYPE_MARKER_KEY,
   LOGIN_TYPE,
+  MAX_PEOPLE,
+  PEOPLE_KEY,
+  PERSON_TYPE,
   type EntryType
 } from './entryTypes'
 import {
@@ -182,7 +185,8 @@ export class VaultSession {
   snapshot(): VaultSnapshot {
     const root = this.db.getDefaultGroup()
     const entries: VaultEntrySummary[] = []
-    for (const entry of root.allEntries()) entries.push(this.summarize(entry))
+    const people = this.personIds()
+    for (const entry of root.allEntries()) entries.push(this.summarize(entry, people))
     return {
       fileId: this.fileId,
       fileName: this.fileName,
@@ -256,8 +260,12 @@ export class VaultSession {
       return typeof v === 'string' ? v : ''
     }
     const docs: SearchDocument[] = []
+    const all = this.db.getDefaultGroup().allEntries()
+    const persons = this.personIds()
+    const names = new Map<string, string>()
+    for (const e of all) if (persons.has(e.uuid.id)) names.set(e.uuid.id, this.personName(e))
     for (const entry of this.db.getDefaultGroup().allEntries()) {
-      const summary = this.summarize(entry)
+      const summary = this.summarize(entry, persons)
       const type = getType(summary.type)
       const groups: string[] = []
       for (let g = entry.parentGroup; g?.parentGroup; g = g.parentGroup)
@@ -266,6 +274,7 @@ export class VaultSession {
         uuid: summary.uuid,
         title: plain(entry, 'Title'),
         type: type && type.id !== LOGIN_TYPE ? type.label : '',
+        typeKeywords: type && type.id !== LOGIN_TYPE ? (type.keywords ?? []) : [],
         tags: entry.tags,
         group: groups.filter(Boolean).join(' / '),
         host: hostLabel(plain(entry, 'URL')),
@@ -276,6 +285,7 @@ export class VaultSession {
           (k) => !(STANDARD_FIELDS as readonly string[]).includes(k) && !OTP_FIELDS.includes(k)
         ),
         notes: plain(entry, 'Notes').slice(0, NOTES_LIMIT),
+        people: summary.people.map((id) => names.get(id) ?? '').filter(Boolean),
         inRecycleBin: summary.inRecycleBin
       })
     }
@@ -319,6 +329,17 @@ export class VaultSession {
     // Strongbox both show it, and merge relies on it.
     entry.pushHistory()
     this.applyInput(entry, input)
+    entry.times.update()
+    this.touch()
+  }
+
+  /** Link an entry to people (Person entry uuids), replacing its current links. */
+  setPeople(uuid: string, people: string[]): void {
+    const entry = this.getEntry(uuid)
+    const next = this.validPeople(entry, people)
+    if (next.join(',') === this.readPeople(entry).join(',')) return
+    entry.pushHistory()
+    this.writePeople(entry, next)
     entry.times.update()
     this.touch()
   }
@@ -512,6 +533,58 @@ export class VaultSession {
     }
 
     this.applyType(entry, type, isNew || type !== previous.type)
+    if (input.people !== undefined) this.writePeople(entry, this.validPeople(entry, input.people))
+  }
+
+  // ---------------------------------------------------------------- people
+
+  /** Uuids of Person entries (in or out of the bin). */
+  private personIds(): Set<string> {
+    const ids = new Set<string>()
+    for (const e of this.db.getDefaultGroup().allEntries()) {
+      if (this.resolveType(e).type.id === PERSON_TYPE) ids.add(e.uuid.id)
+    }
+    return ids
+  }
+
+  /** The requested links that point at real Person entries, deduplicated, never the entry itself. */
+  private validPeople(entry: kdbxweb.KdbxEntry, people: unknown): string[] {
+    if (!Array.isArray(people) || people.length > MAX_PEOPLE)
+      throw new VaultError('Unknown', 'Invalid people list')
+    const persons = this.personIds()
+    const out: string[] = []
+    for (const id of people) {
+      if (typeof id !== 'string' || id === entry.uuid.id || !persons.has(id)) continue
+      if (!out.includes(id)) out.push(id)
+    }
+    return out
+  }
+
+  /** Linked people as stored, keeping only ids that are still Person entries. */
+  private readPeople(entry: kdbxweb.KdbxEntry, persons = this.personIds()): string[] {
+    const raw = entry.customData?.get(PEOPLE_KEY)?.value
+    if (!raw) return []
+    return [...new Set(raw.split(','))]
+      .filter((id) => id !== entry.uuid.id && persons.has(id))
+      .slice(0, MAX_PEOPLE)
+  }
+
+  private writePeople(entry: kdbxweb.KdbxEntry, people: string[]) {
+    if (!people.length) {
+      entry.customData?.delete(PEOPLE_KEY)
+      return
+    }
+    entry.customData ??= new Map()
+    entry.customData.set(PEOPLE_KEY, { value: people.join(','), lastModified: new Date() })
+  }
+
+  /** A person's display name: the entry title, else the name fields (plain text only). */
+  private personName(entry: kdbxweb.KdbxEntry): string {
+    const plain = (key: string) => {
+      const v = entry.fields.get(key)
+      return typeof v === 'string' ? v : ''
+    }
+    return plain('Title') || [plain('Given names'), plain('Surname')].filter(Boolean).join(' ')
   }
 
   /**
@@ -555,7 +628,7 @@ export class VaultSession {
     return { type: loginType(), detected: false }
   }
 
-  private summarize(entry: kdbxweb.KdbxEntry): VaultEntrySummary {
+  private summarize(entry: kdbxweb.KdbxEntry, persons?: Set<string>): VaultEntrySummary {
     const { type } = this.resolveType(entry)
     // Only plain string fields feed the subtitle: a protected value never reaches a snapshot.
     const plain = (key: string) => {
@@ -579,7 +652,8 @@ export class VaultSession {
       hasOtp: OTP_FIELDS.some((k) => entry.fields.has(k)),
       attachmentCount: entry.binaries.size,
       inRecycleBin: this.isInRecycleBin(entry.parentGroup),
-      modified: iso(entry.times.lastModTime)
+      modified: iso(entry.times.lastModTime),
+      people: this.readPeople(entry, persons)
     }
   }
 

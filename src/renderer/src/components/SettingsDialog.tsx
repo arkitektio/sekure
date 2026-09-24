@@ -17,6 +17,7 @@ import { DeidentifySettings } from '@/components/DeidentifySettings'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePlatform } from '@/hooks/usePlatform'
+import { useGlass } from '@/hooks/useChrome'
 import { api, displayError } from '@/lib/api'
 import { acceleratorFromEvent, formatAccelerator } from '@/vault/autotype'
 import {
@@ -27,6 +28,28 @@ import {
 import type { Preferences } from '../../../main/preferences/protocol'
 
 /** App settings: brand color and auto-type. Both are also stored in the open vault. */
+/** See-through sidebar: macOS vibrancy / Windows acrylic. A device setting, not in the vault. */
+function GlassSetting() {
+  const platform = usePlatform()
+  const glass = useGlass((s) => s.glass)
+  const setGlass = useGlass((s) => s.setGlass)
+  if (platform !== 'darwin' && platform !== 'win32') return null
+  return (
+    <label className="flex items-center justify-between text-sm">
+      <span>
+        Translucent sidebar
+        <span className="block text-xs text-muted-foreground">
+          Lets the desktop show through the sidebar.
+        </span>
+      </span>
+      <Switch
+        checked={glass}
+        onCheckedChange={(on) => void setGlass(on).catch((e) => toast.error(displayError(e)))}
+      />
+    </label>
+  )
+}
+
 export function SettingsButton() {
   const isMac = usePlatform() === 'darwin'
   const [open, setOpen] = useState(false)
@@ -138,6 +161,7 @@ export function SettingsButton() {
             <section className="flex flex-col gap-3">
               <h3 className="text-sm font-medium">Appearance</h3>
               <BrandCustomizer brand={prefs.brand} />
+              <GlassSetting />
             </section>
           )}
           <Separator />

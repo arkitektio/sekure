@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { ChevronRight, FolderPlus, Layers, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,19 +9,27 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { PromptDialog } from '@/components/PromptDialog'
-import { ALL_ENTRIES, typeFilterId, useVault } from '@/stores/vault'
+import { ALL_ENTRIES, activePage, useVault } from '@/stores/vault'
 import { api, displayError } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { renderGroupIcon, renderTypeIcon } from './icons'
-import { ENTRY_TYPES } from '../../../main/vault/entryTypes'
+import { renderGroupIcon } from './icons'
+import { clickOptions } from './tabs'
 import type { VaultGroupNode } from '../../../main/vault/protocol'
 
 type Prompt =
   { kind: 'create'; parent: string | undefined } | { kind: 'rename'; group: VaultGroupNode }
 
+/** The list the active tab shows, if it shows one. */
+const useActiveScope = () =>
+  useVault((s) => {
+    const page = activePage(s)
+    return page.kind === 'list' ? page.scope : undefined
+  })
+
+/** The vault's groups as a tree, with create / rename / delete. Lives on the Home page. */
 export function GroupTree() {
   const snapshot = useVault((s) => s.snapshot)
-  const selected = useVault((s) => s.selectedGroup)
+  const selected = useActiveScope()
   const select = useVault((s) => s.selectGroup)
   const [prompt, setPrompt] = useState<Prompt>()
   if (!snapshot) return null
@@ -46,9 +53,11 @@ export function GroupTree() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-sidebar">
-      <div className="flex items-center justify-between px-3 pt-3 pb-1">
-        <span className="text-xs font-medium text-muted-foreground uppercase">Groups</span>
+    <div className="flex flex-col">
+      <div className="flex items-center justify-between pb-1">
+        <h2 className="text-xs font-medium tracking-wider text-muted-foreground uppercase">
+          Groups
+        </h2>
         <Button
           variant="ghost"
           size="icon-xs"
@@ -58,14 +67,13 @@ export function GroupTree() {
           <FolderPlus />
         </Button>
       </div>
-      <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
+      <div className="pb-3">
         <button
-          onClick={() => select(ALL_ENTRIES)}
+          onClick={(e) => select(ALL_ENTRIES, clickOptions(e))}
+          onAuxClick={(e) => e.button === 1 && select(ALL_ENTRIES, clickOptions(e))}
           className={cn(
             'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm',
-            selected === ALL_ENTRIES
-              ? 'bg-sidebar-accent font-medium'
-              : 'hover:bg-sidebar-accent/60'
+            selected === ALL_ENTRIES ? 'bg-muted font-medium' : 'hover:bg-muted/60'
           )}
         >
           <Layers className="size-4 text-primary" />
@@ -75,8 +83,7 @@ export function GroupTree() {
           </span>
         </button>
         <GroupNode node={snapshot.root} depth={0} actions={actions} isRoot />
-        <Categories />
-      </ScrollArea>
+      </div>
 
       <PromptDialog
         open={!!prompt}
@@ -112,7 +119,7 @@ function GroupNode({
   }
   isRoot?: boolean
 }) {
-  const selected = useVault((s) => s.selectedGroup)
+  const selected = useActiveScope()
   const select = useVault((s) => s.selectGroup)
   const [open, setOpen] = useState(true)
   const hasChildren = node.groups.length > 0
@@ -122,7 +129,9 @@ function GroupNode({
       <div
         className={cn(
           'group flex items-center gap-1 rounded-md pr-1 text-sm',
-          selected === node.uuid ? 'bg-sidebar-accent font-medium' : 'hover:bg-sidebar-accent/60'
+          selected === node.uuid
+            ? 'bg-background/70 font-medium shadow-xs ring-1 ring-border/40'
+            : 'hover:bg-background/40'
         )}
         style={{ paddingLeft: depth * 12 }}
       >
@@ -135,7 +144,8 @@ function GroupNode({
         </button>
         <button
           className="flex min-w-0 flex-1 items-center gap-2 py-1.5"
-          onClick={() => select(node.uuid)}
+          onClick={(e) => select(node.uuid, clickOptions(e))}
+          onAuxClick={(e) => e.button === 1 && select(node.uuid, clickOptions(e))}
         >
           {renderGroupIcon(
             node.icon,
@@ -182,44 +192,5 @@ function GroupNode({
           <GroupNode key={g.uuid} node={g} depth={depth + 1} actions={actions} />
         ))}
     </div>
-  )
-}
-
-/** Smart lists per entry type, shown once the vault has anything besides logins. */
-function Categories() {
-  const snapshot = useVault((s) => s.snapshot)
-  const selected = useVault((s) => s.selectedGroup)
-  const select = useVault((s) => s.selectGroup)
-  if (!snapshot) return null
-
-  const counts = new Map<string, number>()
-  for (const e of snapshot.entries) {
-    if (!e.inRecycleBin) counts.set(e.type, (counts.get(e.type) ?? 0) + 1)
-  }
-  if (![...counts.keys()].some((t) => t !== 'login')) return null
-
-  return (
-    <>
-      <div className="px-1 pt-4 pb-1 text-xs font-medium text-muted-foreground uppercase">
-        Categories
-      </div>
-      {ENTRY_TYPES.filter((t) => counts.has(t.id)).map((t) => {
-        const id = typeFilterId(t.id)
-        return (
-          <button
-            key={t.id}
-            onClick={() => select(id)}
-            className={cn(
-              'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm',
-              selected === id ? 'bg-sidebar-accent font-medium' : 'hover:bg-sidebar-accent/60'
-            )}
-          >
-            {renderTypeIcon(t.id, 'size-4 text-primary')}
-            <span className="flex-1 text-left">{t.label}</span>
-            <span className="text-xs text-muted-foreground tabular-nums">{counts.get(t.id)}</span>
-          </button>
-        )
-      })}
-    </>
   )
 }

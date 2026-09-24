@@ -1,33 +1,33 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { KeyRound, Search } from 'lucide-react'
 import { toast } from 'sonner'
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
-import { Kbd } from '@/components/ui/kbd'
-import { useVault } from '@/stores/vault'
+import { activePage, useVault } from '@/stores/vault'
+import { HOME } from '@/vault/tabs'
+import { usePalette } from '@/stores/palette'
 import { api } from '@/lib/api'
-import { GroupTree } from '@/vault/GroupTree'
-import { EntryList } from '@/vault/EntryList'
-import { EntryDetail } from '@/vault/EntryDetail'
-import { EntryForm } from '@/vault/EntryForm'
-import { CommandPalette } from '@/vault/CommandPalette'
+import { VaultLayout } from '@/vault/layout/VaultLayout'
+import { TabPage } from '@/vault/pages/TabPage'
 import { useVaultActions } from '@/vault/useVaultActions'
 import { unlockPath } from '@/lib/vaults'
 
 const ACTIVITY_THROTTLE_MS = 15_000
+
+/** A printable key typed while nothing editable has focus and no dialog is open. */
+function startsSearch(e: KeyboardEvent): boolean {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.key.length !== 1 || e.key === ' ') return false
+  const t = e.target as HTMLElement | null
+  if (t?.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]'))
+    return false
+  return !document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')
+}
 
 export function Vault() {
   const navigate = useNavigate()
   const snapshot = useVault((s) => s.snapshot)
   const setSnapshot = useVault((s) => s.setSnapshot)
   const reset = useVault((s) => s.reset)
-  const selectedEntry = useVault((s) => s.selectedEntry)
-  const editing = useVault((s) => s.editing)
-  const newEntryType = useVault((s) => s.newEntryType)
   const startNew = useVault((s) => s.startNew)
   const { save, lock } = useVaultActions()
-  const [paletteOpen, setPaletteOpen] = useState(false)
 
   // Rehydrate after a reload (the session lives in main, not here).
   useEffect(() => {
@@ -44,8 +44,10 @@ export function Vault() {
       api.vault.onEvent((event) => {
         if (event.type === 'changed') setSnapshot(event.snapshot)
         if (event.type === 'locked') {
-          const fileId = useVault.getState().snapshot?.fileId
+          const { snapshot: current, switchTarget } = useVault.getState()
+          const target = switchTarget ?? (current ? unlockPath(current.fileId) : '/files')
           reset()
+          usePalette.getState().hide()
           if (event.unsaved === 'recovered') {
             toast.warning('Locked with unsaved changes', {
               description:
@@ -57,7 +59,7 @@ export function Vault() {
           } else if (event.reason !== 'manual') {
             toast.info(event.reason === 'idle' ? 'Locked after inactivity' : 'Locked with your Mac')
           }
-          navigate(fileId ? unlockPath(fileId) : '/files', { replace: true })
+          navigate(target, { replace: true })
         }
       }),
     [navigate, reset, setSnapshot]
@@ -82,83 +84,71 @@ export function Vault() {
     }
   }, [])
 
-  // Keyboard shortcuts.
+  // Keyboard shortcuts. Capture phase, so an input doesn't swallow ⌘W or Ctrl+Tab.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const vault = useVault.getState()
+      const palette = usePalette.getState()
+      if (startsSearch(e) && !palette.open) {
+        // Typing anywhere starts a search with that character.
+        e.preventDefault()
+        palette.show(e.key)
+        return
+      }
+      if (e.ctrlKey && e.key === 'Tab') {
+        e.preventDefault()
+        vault.cycleTabs(e.shiftKey ? -1 : 1)
+        return
+      }
       if (!(e.metaKey || e.ctrlKey)) return
       const key = e.key.toLowerCase()
-      if (key === 'k') {
+      if (key === 'k' || key === 'f') {
         e.preventDefault()
-        setPaletteOpen((o) => !o)
+        if (key === 'k') palette.toggle()
+        else palette.show()
       } else if (key === 's') {
         e.preventDefault()
-        if (useVault.getState().snapshot?.dirty) void save()
+        if (vault.snapshot?.dirty) void save()
       } else if (key === 'l') {
         e.preventDefault()
-        if (!useVault.getState().snapshot?.dirty) void lock()
+        if (!vault.snapshot?.dirty) void lock()
         else toast.warning('Save your changes before locking (⌘S)')
       } else if (key === 'n') {
         e.preventDefault()
         startNew()
-      } else if (key === 'f') {
+      } else if (key === 't') {
         e.preventDefault()
-        document.querySelector<HTMLInputElement>('[data-search-input]')?.focus()
+        vault.open(HOME, { newTab: true })
+      } else if (key === 'w') {
+        e.preventDefault()
+        vault.closeTab(vault.activeTab)
+      } else if (key === '[') {
+        e.preventDefault()
+        vault.back()
+      } else if (key === ']') {
+        e.preventDefault()
+        vault.forward()
       } else if (key === 'c' && e.shiftKey) {
-        const uuid = useVault.getState().selectedEntry
-        if (!uuid) return
+        const page = activePage(vault)
+        if (page.kind !== 'entry') return
         e.preventDefault()
         void api.vault
-          .copy(uuid, 'Password')
+          .copy(page.uuid, 'Password')
           .then(() =>
             toast.success('Password copied', { description: 'Clipboard clears in 30 seconds' })
           )
           .catch(() => toast.error('This entry has no password'))
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [save, lock, startNew])
 
   if (!snapshot) return null
 
   return (
-    <>
-      <ResizablePanelGroup orientation="horizontal">
-        <ResizablePanel defaultSize="220px" minSize="160px" maxSize="360px">
-          <GroupTree />
-        </ResizablePanel>
-        <ResizableHandle />
-        <ResizablePanel defaultSize="320px" minSize="240px" maxSize="520px">
-          <EntryList />
-        </ResizablePanel>
-        <ResizableHandle />
-        <ResizablePanel minSize="320px">
-          {editing ? (
-            <EntryForm key={editing === 'new' ? `new:${newEntryType}` : editing} uuid={editing} />
-          ) : selectedEntry ? (
-            <EntryDetail key={selectedEntry} uuid={selectedEntry} />
-          ) : (
-            <Empty className="h-full">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <KeyRound />
-                </EmptyMedia>
-                <EmptyTitle>No entry selected</EmptyTitle>
-                <EmptyDescription>
-                  Pick an entry, or press <Kbd>⌘K</Kbd> to search.
-                </EmptyDescription>
-              </EmptyHeader>
-              <button
-                onClick={() => setPaletteOpen(true)}
-                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-              >
-                <Search className="size-4" /> Search vault
-              </button>
-            </Empty>
-          )}
-        </ResizablePanel>
-      </ResizablePanelGroup>
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
-    </>
+    <VaultLayout>
+      <TabPage />
+    </VaultLayout>
   )
 }

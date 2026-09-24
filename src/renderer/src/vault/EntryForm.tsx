@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useFieldArray, useForm, type UseFormReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Eye, EyeOff, Lock, LockOpen, Plus, X } from 'lucide-react'
+import { Check, Eye, EyeOff, Lock, LockOpen, Plus, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,18 +10,21 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { groupForNew, useVault } from '@/stores/vault'
+import { useVault } from '@/stores/vault'
 import { api, displayError } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { PasswordGenerator } from './PasswordGenerator'
+import { PeopleField } from './PeoplePicker'
 import { renderTypeIcon } from './icons'
 import { COUNTRY_CODES, countryName } from './typedValues'
 import {
   ENTRY_TYPE_GROUPS,
   ENTRY_TYPES,
+  fieldFormat,
   getType,
   loginType,
   normalizeValue,
+  PERSON_TYPE,
   suggestTitle,
   validateValue,
   type EntryType,
@@ -39,6 +42,8 @@ const schema = z.object({
   url: z.string(),
   tags: z.string(),
   notes: z.string(),
+  /** Person entries this entry belongs to. */
+  people: z.array(z.string()),
   /** Every non-standard field: the type's fields and any extra custom ones. */
   customFields: z.array(
     z.object({
@@ -73,27 +78,53 @@ function withTypeRows(type: EntryType, rows: FormValues['customFields']) {
   return [...rows, ...missing]
 }
 
-export function EntryForm({ uuid }: { uuid: string | 'new' }) {
+/** Values a new entry starts with (from an “Add …” search suggestion), in canonical form. */
+function prefilled(type: EntryType, prefill: Record<string, string> | undefined) {
+  const std: Partial<Record<StandardName, string>> = {}
+  const custom = new Map<string, string>()
+  for (const [key, value] of Object.entries(prefill ?? {})) {
+    const f = type.fields.find((d) => d.key === key)
+    if (!f) continue
+    const v = normalizeValue(f.kind, value)
+    if (f.standard) std[STANDARD_INPUT[key]] = v
+    else custom.set(key, v)
+  }
+  const rows = withTypeRows(type, []).map((r) =>
+    custom.has(r.key) ? { ...r, value: custom.get(r.key)! } : r
+  )
+  return { std, rows }
+}
+
+/** A new entry: its type, target group and any values from a search suggestion. */
+export interface NewEntry {
+  type: string
+  group?: string
+  prefill?: Record<string, string>
+  /** Person entries to link it to (started from someone's page). */
+  people?: string[]
+}
+
+export function EntryForm({ uuid, create }: { uuid: string | 'new'; create?: NewEntry }) {
   const isNew = uuid === 'new'
-  const selectedGroup = useVault((s) => s.selectedGroup)
-  const newEntryType = useVault((s) => s.newEntryType)
   const setEditing = useVault((s) => s.setEditing)
-  const selectEntry = useVault((s) => s.selectEntry)
+  const replacePage = useVault((s) => s.replace)
   const [loaded, setLoaded] = useState(isNew)
 
-  const initialType = getType(newEntryType) ?? loginType()
+  const initialType = getType(create?.type) ?? loginType()
+  const [initial] = useState(() => prefilled(initialType, isNew ? create?.prefill : undefined))
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       type: initialType.id,
       title: '',
-      username: '',
-      password: '',
+      username: initial.std.username ?? '',
+      password: initial.std.password ?? '',
       passwordUntouched: false,
-      url: '',
+      url: initial.std.url ?? '',
       tags: '',
       notes: '',
-      customFields: withTypeRows(initialType, [])
+      people: create?.people ?? [],
+      customFields: initial.rows
     }
   })
   const fields = useFieldArray({ control: form.control, name: 'customFields' })
@@ -126,6 +157,7 @@ export function EntryForm({ uuid }: { uuid: string | 'new' }) {
         url,
         tags: entry.tags.join(', '),
         notes,
+        people: entry.people ?? [],
         customFields: withTypeRows(
           entryType,
           entry.customFields.map((f) => ({
@@ -202,6 +234,8 @@ export function EntryForm({ uuid }: { uuid: string | 'new' }) {
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean),
+      // A Person belongs to nobody; everything else keeps what the picker says.
+      people: t.id === PERSON_TYPE ? [] : v.people,
       customFields: rows
         // Empty, never-filled type fields are not worth a column in other KeePass apps.
         .filter((f) => !(typeKeys.has(f.key) && !f.untouched && !f.value.trim()))
@@ -216,8 +250,9 @@ export function EntryForm({ uuid }: { uuid: string | 'new' }) {
     }
     try {
       if (isNew) {
-        const { result } = await api.vault.createEntry(groupForNew(selectedGroup), input)
-        selectEntry(result)
+        const { result } = await api.vault.createEntry(create?.group, input)
+        // The "new" page becomes the entry, so Back doesn't return to an empty form.
+        replacePage({ kind: 'entry', uuid: result })
       } else {
         await api.vault.updateEntry(uuid, input)
         setEditing(undefined)
@@ -315,6 +350,17 @@ export function EntryForm({ uuid }: { uuid: string | 'new' }) {
               )
             })}
           </div>
+
+          {type.id !== PERSON_TYPE && (
+            <div className="grid gap-2">
+              <Label>Belongs to</Label>
+              <PeopleField
+                value={form.watch('people')}
+                onChange={(people) => form.setValue('people', people, { shouldDirty: true })}
+                exclude={isNew ? undefined : uuid}
+              />
+            </div>
+          )}
 
           <div className="grid gap-2">
             <Label htmlFor="tags">Tags</Label>
@@ -521,7 +567,9 @@ function TypedInput({
   const reg = form.register(`${path}.value`, {
     onChange: () => form.setValue(`${path}.untouched`, false)
   })
-  const mono = ['iban', 'bic', 'cardNumber', 'expiry'].includes(field.kind)
+  const mono = ['iban', 'bic', 'cardNumber', 'expiry'].includes(field.kind) || !!field.formats
+  const value = form.watch(`${path}.value`)
+  const recognized = !untouched && field.formats ? fieldFormat(field, value ?? '') : undefined
   const placeholder = untouched ? '•••••••• (unchanged)' : field.placeholder
 
   // Protected values arrive masked; revealing loads them so they can be edited.
@@ -596,7 +644,13 @@ function TypedInput({
         {field.required && <span className="text-muted-foreground">*</span>}
       </Label>
       {control}
-      {error && <p className="text-xs text-destructive">{error.message}</p>}
+      {error ? (
+        <p className="text-xs text-destructive">{error.message}</p>
+      ) : recognized ? (
+        <p className="flex items-center gap-1 text-xs text-muted-foreground">
+          <Check className="size-3 text-primary" /> {recognized.label}
+        </p>
+      ) : null}
     </>
   )
 }

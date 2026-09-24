@@ -26,7 +26,13 @@ import {
   type Brand,
   type Preferences
 } from '../main/preferences/protocol'
-import { SEARCH_STATUS_CHANNEL, type SearchHit, type SemanticStatus } from '../main/search/protocol'
+import { WINDOW_STATE_CHANNEL, type WindowState } from '../main/window/protocol'
+import {
+  SEARCH_STATUS_CHANNEL,
+  type SearchHit,
+  type SemanticStatus,
+  type TypeSuggestion
+} from '../main/search/protocol'
 import {
   DEIDENTIFY_STATUS_CHANNEL,
   DEIDENTIFY_VIEW_CHANNEL,
@@ -61,7 +67,12 @@ const api = {
     minimize: () => invoke('window:minimize'),
     toggleMaximize: () => invoke('window:toggleMaximize'),
     close: () => invoke('window:close'),
-    setTheme: (resolved: string, source: string) => invoke('window:setTheme', resolved, source)
+    setTheme: (resolved: string, source: string) => invoke('window:setTheme', resolved, source),
+    /** Whether the sidebar is see-through (macOS vibrancy / Windows acrylic). */
+    getGlass: (): Promise<boolean> => invoke('window:getGlass'),
+    setGlass: (on: boolean): Promise<boolean> => invoke('window:setGlass', on),
+    state: (): Promise<WindowState> => invoke('window:state'),
+    onState: (cb: (s: WindowState) => void) => subscribe(WINDOW_STATE_CHANNEL, cb)
   },
   shell: {
     /** Open an http(s) URL in the default browser (main validates it). */
@@ -101,6 +112,9 @@ const api = {
       invoke('vault:createEntry', groupUuid, input),
     updateEntry: (uuid: string, input: EntryInput): Mutation =>
       invoke('vault:updateEntry', uuid, input),
+    /** Link an entry to people (Person entry uuids), replacing its links. */
+    setPeople: (uuid: string, people: string[]): Mutation =>
+      invoke('vault:setPeople', uuid, people),
     deleteEntry: (uuid: string): Mutation => invoke('vault:deleteEntry', uuid),
     moveEntry: (uuid: string, groupUuid: string): Mutation =>
       invoke('vault:moveEntry', uuid, groupUuid),
@@ -133,11 +147,13 @@ const api = {
   search: {
     /** Ranked hits for the open vault: text matches first, then semantic ones. */
     query: (query: string): Promise<SearchHit[]> => invoke('search:query', query),
+    /** Entry types whose meaning matches `query` (empty without the local model). */
+    suggestTypes: (query: string): Promise<TypeSuggestion[]> =>
+      invoke('search:suggestTypes', query),
     status: (): Promise<SemanticStatus> => invoke('search:status'),
-    /** Download (once) and start the local embedding model. */
+    /** Start the local embedding model that ships with the app. */
     enableSemantic: (): Promise<void> => invoke('search:enableSemantic'),
-    disableSemantic: (removeFiles: boolean): Promise<void> =>
-      invoke('search:disableSemantic', removeFiles),
+    disableSemantic: (): Promise<void> => invoke('search:disableSemantic'),
     onStatus: (cb: (s: SemanticStatus) => void) => subscribe(SEARCH_STATUS_CHANNEL, cb)
   },
   deidentify: {

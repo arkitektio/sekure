@@ -90,6 +90,17 @@ async function matches(path: string, sha256: string): Promise<boolean> {
   return hash.digest('hex') === sha256
 }
 
+/**
+ * Throws unless `data` is exactly the pinned file `path` of `spec`. Used on the bytes
+ * a model is loaded from, so what runs is what was pinned, even for a bundled model.
+ */
+export function assertPinned(spec: ModelSpec, path: string, data: string | Uint8Array): void {
+  const file = spec.files.find((f) => f.path === path)
+  if (!file) throw new Error(`${path} is not part of ${spec.id}`)
+  if (createHash('sha256').update(data).digest('hex') !== file.sha256)
+    throw new Error(`${path} failed its integrity check`)
+}
+
 export async function removeModel(dir: string) {
   await rm(dir, { recursive: true, force: true })
 }

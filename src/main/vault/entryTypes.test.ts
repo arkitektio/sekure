@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   detectType,
+  ENTRY_TYPE_GROUPS,
   ENTRY_TYPES,
+  fieldFormat,
   formatMarker,
+  getIdFormat,
   getType,
+  ID_FORMATS,
+  recognizeId,
+  suggestNewEntries,
   normalizeValue,
   parseMarker,
   subtitleFor,
@@ -38,6 +44,51 @@ describe('entry type registry', () => {
         expect(isStandard, `${t.id}.${f.key}`).toBe(!!f.standard)
         if (f.standard) expect(f.key).toBe(f.standard)
       }
+    }
+  })
+
+  it('gives every group a type and every type a known group', () => {
+    for (const g of ENTRY_TYPE_GROUPS)
+      expect(
+        ENTRY_TYPES.some((t) => t.group === g.id),
+        g.id
+      ).toBe(true)
+    for (const t of ENTRY_TYPES) expect(ENTRY_TYPE_GROUPS.map((g) => g.id)).toContain(t.group)
+  })
+
+  it('describes every type in one short line for the wizard', () => {
+    for (const t of ENTRY_TYPES) {
+      expect(t.description.length, t.id).toBeGreaterThan(10)
+      expect(t.description.length, t.id).toBeLessThan(90)
+    }
+  })
+
+  it('has a distinct signature per type', () => {
+    const sigs = ENTRY_TYPES.filter((t) => t.signature.length).map((t) =>
+      [...t.signature].sort().join('|')
+    )
+    expect(new Set(sigs).size).toBe(sigs.length)
+    // Each type is recognised as itself from its own field names.
+    for (const t of ENTRY_TYPES.filter((t) => t.signature.length)) {
+      expect(detectType(t.fields.map((f) => f.key))?.id, t.id).toBe(t.id)
+    }
+  })
+
+  it('points formats at real fields', () => {
+    for (const t of ENTRY_TYPES) {
+      for (const f of t.fields) {
+        for (const id of f.formats ?? []) expect(getIdFormat(id), `${t.id}.${f.key}`).toBeDefined()
+      }
+    }
+    for (const f of ID_FORMATS) {
+      const t = getType(f.typeId)
+      expect(t, f.id).toBeDefined()
+      expect(
+        t!.fields.map((x) => x.key),
+        f.id
+      ).toContain(f.fieldKey)
+      for (const key of Object.keys(f.extra ?? {}))
+        expect(t!.fields.map((x) => x.key)).toContain(key)
     }
   })
 
@@ -107,5 +158,85 @@ describe('values', () => {
     expect(suggestTitle(passport, (k) => values[k] ?? '')).toBe('Passport – Jane Doe')
     const login = getType('login')!
     expect(subtitleFor(login, (k) => ({ URL: 'https://x' })[k] ?? '')).toBe('https://x')
+  })
+})
+
+describe('id formats', () => {
+  const first = (q: string) => recognizeId(q)[0]?.format.id
+
+  it('recognises checksummed national numbers', () => {
+    expect(first('86095742719')).toBe('de-steuer-id')
+    expect(first('RSSMRA85T10A562S')).toBe('it-codice-fiscale')
+    expect(first('12345678Z')).toBe('es-nif')
+    expect(first('X1234567L')).toBe('es-nif')
+    expect(first('111222333')).toBe('nl-bsn')
+    expect(first('756.9217.0769.85')).toBe('ch-ahv')
+    expect(first('2 55 08 14 168 025 38')).toBe('fr-nir')
+    expect(first('65 170839 J 00 3')).toBe('de-sv-nummer')
+    expect(first('DE89 3704 0044 0532 0130 00')).toBe('iban')
+    expect(first('4111 1111 1111 1111')).toBe('card')
+  })
+
+  it('rejects bad check digits', () => {
+    expect(recognizeId('86095742718')).toEqual([])
+    expect(recognizeId('RSSMRA85T10A562T')).toEqual([])
+    expect(recognizeId('12345678A')).toEqual([])
+    expect(recognizeId('756.9217.0769.86')).toEqual([])
+    expect(first('65 170839 J 00 4')).toBeUndefined()
+  })
+
+  it('recognises pattern formats', () => {
+    expect(first('12-3456789')).toBe('us-ein')
+    expect(first('123-45-6789')).toBe('us-ssn')
+    expect(first('000-45-6789')).toBeUndefined()
+    expect(first('912-70-1234')).toBe('us-itin')
+    expect(first('AB123456C')).toBe('uk-nino')
+    expect(first('BG123456C')).toBeUndefined()
+    expect(first('DE123456789')).toBe('eu-vat')
+    expect(first('1M8GDM9AXKP042788')).toBe('vin')
+    expect(recognizeId('490154203237518').map((r) => r.format.id)).toContain('imei')
+    expect(first('jane@example.com')).toBe('email')
+    expect(first('github.com')).toBe('web')
+  })
+
+  it('never suggests ambiguous formats but still names them for a field', () => {
+    expect(recognizeId('1234567890').map((r) => r.format.id)).not.toContain('uk-utr')
+    const taxField = getType('taxId')!.fields[0]
+    expect(fieldFormat(taxField, '1234567890')?.id).toBe('uk-utr')
+    expect(fieldFormat(taxField, '86 095 742 719')?.id).toBe('de-steuer-id')
+    expect(fieldFormat(taxField, 'hello')).toBeUndefined()
+  })
+})
+
+describe('suggestNewEntries', () => {
+  it('prefills a recognised number with its country and kind', () => {
+    expect(suggestNewEntries('12-3456789')[0]).toEqual({
+      typeId: 'taxId',
+      via: 'id',
+      detail: 'US EIN',
+      prefill: { 'Tax ID number': '12-3456789', 'ID kind': 'EIN', Country: 'US' }
+    })
+    expect(suggestNewEntries('de89370400440532013000')[0].prefill).toEqual({
+      IBAN: 'DE89 3704 0044 0532 0130 00'
+    })
+    expect(suggestNewEntries('github.com')[0]).toMatchObject({
+      typeId: 'login',
+      prefill: { URL: 'https://github.com' }
+    })
+    expect(suggestNewEntries('FR12345678901')[0].prefill?.Country).toBe('FR')
+  })
+
+  it('matches type names and keywords in any language we list', () => {
+    expect(suggestNewEntries('steuer')[0].typeId).toBe('taxId')
+    expect(suggestNewEntries('Führerschein')[0].typeId).toBe('driversLicense')
+    expect(suggestNewEntries('new passport')[0].typeId).toBe('passport')
+    expect(suggestNewEntries('car insurance')[0].typeId).toBe('insurancePolicy')
+    expect(suggestNewEntries('krankenkasse')[0].typeId).toBe('healthInsurance')
+  })
+
+  it('returns nothing for noise and caps the list', () => {
+    expect(suggestNewEntries('zz')).toEqual([])
+    expect(suggestNewEntries('   ')).toEqual([])
+    expect(suggestNewEntries('account').length).toBeLessThanOrEqual(4)
   })
 })

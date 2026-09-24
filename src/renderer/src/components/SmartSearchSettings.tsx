@@ -1,14 +1,11 @@
 import { useState } from 'react'
 import { Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { api, displayError } from '@/lib/api'
 import { useSemanticStatus } from '@/vault/useSearch'
 
-const megabytes = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`
-
-/** Opt-in for the local embedding model behind “Related” search results. */
+/** On/off for the built-in embedding model behind “Related” results and “Add …” hints. */
 export function SmartSearchSettings() {
   const status = useSemanticStatus()
   const [busy, setBusy] = useState(false)
@@ -28,8 +25,7 @@ export function SmartSearchSettings() {
 
   const progress = status.progress !== undefined ? ` ${Math.round(status.progress * 100)}%` : ''
   const label: Record<typeof status.state, string> = {
-    off: `Downloads a ${megabytes(status.downloadBytes)} language model once. Search then runs entirely on this device.`,
-    downloading: `Downloading the model…${progress}`,
+    off: 'Uses a language model built into Sekure. It runs entirely on this device.',
     loading: 'Loading the model…',
     indexing: `Reading your vault…${progress}`,
     ready: 'Finds entries by meaning in many languages: “travel document” finds your passport.',
@@ -51,15 +47,13 @@ export function SmartSearchSettings() {
         Find related entries
         <Switch
           checked={on}
-          disabled={busy || status.state === 'downloading'}
+          disabled={busy}
           onCheckedChange={(checked) =>
-            void run(() =>
-              checked ? api.search.enableSemantic() : api.search.disableSemantic(false)
-            )
+            void run(() => (checked ? api.search.enableSemantic() : api.search.disableSemantic()))
           }
         />
       </label>
-      {(status.state === 'downloading' || status.state === 'indexing') && (
+      {status.state === 'indexing' && (
         <div className="h-1.5 overflow-hidden rounded-full bg-muted">
           <div
             className="h-full bg-primary transition-[width]"
@@ -74,17 +68,6 @@ export function SmartSearchSettings() {
       >
         {label[status.state]}
       </p>
-      {(status.state === 'ready' || status.state === 'error') && (
-        <Button
-          variant="link"
-          size="xs"
-          className="self-start px-0 text-muted-foreground"
-          disabled={busy}
-          onClick={() => void run(() => api.search.disableSemantic(true))}
-        >
-          Turn off and delete the model
-        </Button>
-      )}
     </section>
   )
 }

@@ -4,6 +4,8 @@
 @import '@fontsource-variable/noto-sans';
 
 @custom-variant dark (&:is(.dark *));
+/* `glass:` styles apply while the window is see-through (macOS vibrancy, Windows acrylic). */
+@custom-variant glass (&:is(.rail-glass *));
 
 /* Window-drag regions for the renderer-drawn title bar. EVERY interactive
  * child of an `app-drag` area needs `app-no-drag` or it cannot be clicked. */
@@ -12,6 +14,17 @@
 }
 
 @utility app-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Floating layers (menus, popovers, the search palette, dialogs) render in portals
+ * that often sit over a drag region (the rail, a page header). Electron would treat
+ * clicks there as window drags, so the item never gets them: carve them out. */
+[data-radix-popper-content-wrapper],
+[role='dialog'],
+[role='alertdialog'],
+[data-slot='dialog-overlay'],
+[data-slot='alert-dialog-overlay'] {
   -webkit-app-region: no-drag;
 }
 
@@ -197,6 +210,15 @@
   [data-selectable] {
     @apply select-text;
   }
+}
+
+/* Glass: the window shows the desktop through the rail; content cards stay opaque.
+ * Unlayered so it beats `bg-sidebar`. */
+.rail-glass body {
+  background: transparent;
+}
+.rail-glass .rail-glass-surface {
+  background-color: color-mix(in oklab, var(--sidebar) 35%, transparent);
 }
 
 ::-webkit-scrollbar {

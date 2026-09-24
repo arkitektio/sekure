@@ -12,17 +12,38 @@ const api = {
 vi.stubGlobal('api', api)
 
 const { EntryForm } = await import('./EntryForm')
-const { useVault } = await import('@/stores/vault')
 
-function renderNew(type: string) {
-  useVault.setState({ newEntryType: type, editing: 'new', selectedGroup: '__all__' })
-  return render(<EntryForm uuid="new" />)
+function renderNew(type: string, prefill?: Record<string, string>) {
+  return render(<EntryForm uuid="new" create={{ type, prefill }} />)
 }
 
 describe('EntryForm with entry types', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     api.vault.createEntry.mockResolvedValue({ result: 'new-uuid' })
+  })
+
+  it('starts from a search suggestion and names the recognised format', async () => {
+    const user = userEvent.setup()
+    renderNew('taxId', { 'Tax ID number': '86 095 742 719', Country: 'de', 'ID kind': 'Personal' })
+
+    expect(screen.getByLabelText(/Tax ID number/)).toHaveValue('86 095 742 719')
+    expect(screen.getByText('German tax ID')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+
+    await waitFor(() => expect(api.vault.createEntry).toHaveBeenCalled())
+    expect(api.vault.createEntry.mock.calls[0][1].customFields).toEqual(
+      expect.arrayContaining([
+        { key: 'Tax ID number', value: '86 095 742 719', protected: false },
+        { key: 'Country', value: 'DE', protected: false },
+        { key: 'ID kind', value: 'Personal', protected: false }
+      ])
+    )
+  })
+
+  it('puts a prefilled website into the standard URL field', () => {
+    renderNew('login', { URL: 'https://github.com' })
+    expect(screen.getByDisplayValue('https://github.com')).toBeTruthy()
   })
 
   it('creates a passport with typed fields and a suggested title', async () => {

@@ -30,8 +30,11 @@ electronFuses:
   onlyLoadAppFromAsar: true
   grantFileProtocolExtraPrivileges: false
 # onnxruntime-web imports and reads its WASM runtime from disk (smart search).
+# The bundled search model is read by a worker thread; unpacked, it is still sealed
+# by the macOS code signature, and the worker checks it against its sha256 pins.
 asarUnpack:
   - out/main/ort/**
+  - out/main/models/**
 win:
   executableName: sekure
 nsis:

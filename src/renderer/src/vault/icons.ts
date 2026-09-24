@@ -1,15 +1,42 @@
 import { createElement } from 'react'
 import {
+  BadgeCheck,
   Banknote,
+  Bitcoin,
   BookUser,
   Braces,
+  Building2,
   Car,
+  CarFront,
+  Contact,
   CreditCard,
+  Database,
+  Gift,
+  HandCoins,
+  HeartPulse,
+  House,
   IdCard,
   KeySquare,
   Landmark,
+  Laptop,
+  LifeBuoy,
+  LockKeyhole,
+  MonitorSmartphone,
+  Plane,
+  ReceiptText,
+  Router,
+  ScrollText,
+  ShieldUser,
+  Smartphone,
   SquareTerminal,
+  Stamp,
+  Stethoscope,
   StickyNote,
+  Ticket,
+  TrendingUp,
+  Umbrella,
+  Wallet,
+  Zap,
   Folder,
   FolderOpen,
   Globe,
@@ -23,6 +50,7 @@ import {
   Wifi,
   type LucideIcon
 } from 'lucide-react'
+import type { EntryTypeGroup } from '../../../main/vault/entryTypes'
 
 // A loose mapping of the KeePass standard icon set (0–68) to lucide.
 const ICONS: Record<number, LucideIcon> = {
@@ -57,19 +85,60 @@ export const renderGroupIcon = (
 export const groupIcon = (icon: number | undefined, recycleBin = false): LucideIcon =>
   recycleBin ? Trash2 : (icon !== undefined && icon !== 0 && icon !== 48 && ICONS[icon]) || Folder
 
-const TYPE_ICONS: Record<string, LucideIcon> = {
+export const TYPE_ICONS: Record<string, LucideIcon> = {
   login: KeyRound,
   passport: BookUser,
   idCard: IdCard,
   driversLicense: Car,
+  residencePermit: BadgeCheck,
+  birthCertificate: ScrollText,
+  personalDetails: Contact,
+  taxId: ReceiptText,
+  socialSecurity: ShieldUser,
+  vatId: Building2,
   bankAccount: Landmark,
   creditCard: CreditCard,
-  secureNote: StickyNote,
+  investmentAccount: TrendingUp,
+  cryptoWallet: Bitcoin,
+  loan: HandCoins,
+  giftCard: Gift,
+  healthInsurance: HeartPulse,
+  insurancePolicy: Umbrella,
+  medicalInfo: Stethoscope,
+  visa: Stamp,
+  loyaltyProgram: Plane,
+  membership: Ticket,
+  vehicle: CarFront,
+  phone: Smartphone,
+  alarmCode: LockKeyhole,
+  utilityAccount: Zap,
+  device: Laptop,
+  emailAccount: Mail,
+  server: Server,
+  database: Database,
+  router: Router,
   wifi: Wifi,
-  softwareLicense: KeySquare,
   sshKey: SquareTerminal,
-  apiToken: Braces
+  apiToken: Braces,
+  recoveryCodes: LifeBuoy,
+  softwareLicense: KeySquare,
+  secureNote: StickyNote
 }
+
+export const GROUP_ICONS: Record<EntryTypeGroup, LucideIcon> = {
+  login: KeyRound,
+  identity: IdCard,
+  government: ReceiptText,
+  finance: Wallet,
+  health: HeartPulse,
+  travel: Plane,
+  home: House,
+  tech: MonitorSmartphone,
+  other: StickyNote
+}
+
+export const renderGroupTypeIcon = (group: EntryTypeGroup, className?: string) =>
+  createElement(GROUP_ICONS[group], { className })
 
 export const typeIcon = (type: string): LucideIcon => TYPE_ICONS[type] ?? KeyRound
 

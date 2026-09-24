@@ -124,6 +124,10 @@ export class VaultModule implements AppModule {
     h('vault:updateEntry', (_e, uuid: string, input: EntryInput) =>
       this.mutate((s) => s.updateEntry(uuid, input))
     )
+    h('vault:setPeople', (_e, uuid: unknown, people: unknown) => {
+      if (typeof uuid !== 'string' || !Array.isArray(people)) throw new Error('Invalid request')
+      return this.mutate((s) => s.setPeople(uuid, people as string[]))
+    })
     h('vault:deleteEntry', (_e, uuid: string) => this.mutate((s) => s.deleteEntry(uuid)))
     h('vault:moveEntry', (_e, uuid: string, groupUuid: string) =>
       this.mutate((s) => s.moveEntry(uuid, groupUuid))

@@ -1,7 +1,9 @@
 // Runs the real model. Opt-in: SEKURE_MODEL_DIR=<folder with the MODEL files> pnpm test
 import { beforeAll, describe, expect, it } from 'vitest'
 import { loadE5 } from './e5'
+import { MODEL } from './protocol'
 import { SearchIndex, type Embedder } from './SearchIndex'
+import { TypeIndex } from './TypeIndex'
 import type { SearchDocument } from './document'
 
 const dir = process.env.SEKURE_MODEL_DIR
@@ -39,7 +41,8 @@ describe.skipIf(!dir)('multilingual-e5-small', () => {
   let embedder: Embedder
   const index = new SearchIndex()
   beforeAll(async () => {
-    embedder = await loadE5({ modelDir: dir! })
+    // With `spec`, as the app loads it: every file must match its sha256 pin.
+    embedder = await loadE5({ modelDir: dir!, spec: MODEL })
     await index.setDocuments(vault)
     await index.setEmbedder(embedder)
   }, 60_000)
@@ -73,5 +76,37 @@ describe.skipIf(!dir)('multilingual-e5-small', () => {
   it('leaves exact matches to the lexical scorer', async () => {
     const hits = await index.search('github')
     expect(hits[0]).toMatchObject({ uuid: 'github', match: 'text' })
+  })
+
+  describe('type suggestions', () => {
+    const types = new TypeIndex()
+    beforeAll(() => types.setEmbedder(embedder), 60_000)
+
+    const suggest = async (q: string) => {
+      const qv = await index.queryVector(q)
+      return qv ? types.suggest(qv).map((s) => s.typeId) : []
+    }
+
+    it.each([
+      ['Krankenkasse', 'healthInsurance'],
+      ['car insurance', 'insurancePolicy'],
+      ['bitcoin seed', 'cryptoWallet'],
+      ['Steuernummer', 'taxId'],
+      ['gym', 'membership'],
+      ['garage door', 'alarmCode'],
+      ['Hausarzt', 'medicalInfo'],
+      ['frequent flyer miles', 'loyaltyProgram'],
+      ['license plate of my car', 'vehicle'],
+      ['backup codes for github', 'recoveryCodes'],
+      ['fritzbox admin', 'router'],
+      ['postgres prod', 'database']
+    ])('"%s" suggests %s', async (query, expected) => {
+      const got = await suggest(query)
+      expect(got).toContain(expected)
+    })
+
+    it.each(['amazon', 'steam', 'work'])('stays quiet for "%s"', async (query) => {
+      expect(await suggest(query)).toEqual([])
+    })
   })
 })
