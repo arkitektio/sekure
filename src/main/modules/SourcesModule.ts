@@ -1,13 +1,14 @@
 import { existsSync, readdirSync } from 'fs'
+import { rm } from 'fs/promises'
 import { homedir } from 'os'
 import { isAbsolute, join } from 'path'
-import { BrowserWindow, dialog } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
 import Store from 'electron-store'
+import log from 'electron-log'
 import { AppModule } from './AppModule'
 import { IpcTransport } from './IpcTransport'
-import { DriveModule } from './DriveModule'
-import { GoogleAuthModule } from './GoogleAuthModule'
-import { DriveSource, LocalSource, type VaultSource } from '../sources/VaultSource'
+import { SecretStore } from '../lib/secrets'
+import { LocalSource, type VaultSource } from '../sources/VaultSource'
 import { isLocalId, localPath, type RecentVault, type VaultRef } from '../sources/protocol'
 
 const MAX_RECENT = 8
@@ -39,18 +40,10 @@ export class SourcesModule implements AppModule {
   /** Local paths the user chose in the file dialog this session. */
   private picked = new Set<string>()
 
-  constructor(
-    private ipc: IpcTransport,
-    private drive: DriveModule,
-    auth: GoogleAuthModule
-  ) {
-    // Disconnecting Google forgets Drive vaults, never local ones.
-    auth.onStatusChange((s) => {
-      if (!s.connected) this.setRecent(this.recent().filter((r) => r.kind === 'local'))
-    })
-  }
+  constructor(private ipc: IpcTransport) {}
 
   setup() {
+    void this.forgetGoogle()
     this.ipc.handleChannel('sources:describe', (_e, id: string) => this.resolve(id).describe())
     this.ipc.handleChannel('sources:recent', () => this.recent())
     this.ipc.handleChannel('sources:forget', (_e, id: string) =>
@@ -73,8 +66,7 @@ export class SourcesModule implements AppModule {
       if (!isAbsolute(path) || !known) throw new Error('Choose this file with “Open local file”')
       return new LocalSource(path)
     }
-    if (!/^[\w-]{10,200}$/.test(id)) throw new Error('Not a Google Drive file id')
-    return new DriveSource(this.drive.client, id)
+    throw new Error('Unknown vault location')
   }
 
   remember(ref: VaultRef) {
@@ -87,10 +79,24 @@ export class SourcesModule implements AppModule {
   }
 
   private recent(): RecentVault[] {
-    // Entries written before sources existed have no `kind`: they were Drive files.
-    return this.store
-      .get('recent')
-      .map((r) => ({ ...r, kind: r.kind ?? 'drive', location: r.location ?? 'Google Drive' }))
+    // Only files on this computer; entries from the removed Google Drive support are dropped.
+    return this.store.get('recent').filter((r) => r.kind === 'local' && isLocalId(r.id))
+  }
+
+  /**
+   * Google Drive support was removed: drop what it left behind, the refresh token
+   * (in the OS-encrypted secret store) and the account/avatar cache.
+   */
+  private async forgetGoogle() {
+    try {
+      new SecretStore().delete('google.refreshToken')
+      await rm(join(app.getPath('userData'), 'google.json'), { force: true })
+      const recent = this.store.get('recent')
+      const local = recent.filter((r) => r.kind === 'local' && isLocalId(r.id))
+      if (local.length !== recent.length) this.setRecent(local)
+    } catch (e) {
+      log.warn('Could not clear old Google Drive data', e)
+    }
   }
 
   private setRecent(recent: RecentVault[]) {

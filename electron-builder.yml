@@ -4,7 +4,7 @@ electronVersion: 43.1.0
 electronLanguages: ['en', 'en-US']
 publish:
   provider: github
-  owner: jhnnsrs
+  owner: arkitektio
   repo: sekure
   releaseType: release
 # "next" rides the standard beta.yml carrier (see AppUpdater.ts).

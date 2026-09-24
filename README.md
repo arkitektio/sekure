@@ -1,23 +1,19 @@
 # Sekure
 
-Open, edit and unlock your **KeePass (`.kdbx`) vaults straight from Google Drive or from
-disk**, with **Touch ID** on macOS and **image/PDF attachments** on any entry.
+Open, edit and unlock your **KeePass (`.kdbx`) vaults from disk**, with **Touch ID** on
+macOS and **image/PDF attachments** on any entry.
 
 - Reads and writes KDBX 3 and KDBX 4 (Argon2d/Argon2id, AES/ChaCha20), so it works with
   files from KeePassXC, KeePass, Strongbox and KeeWeb.
-- **Two ways to reach Drive.**
-  - Connect your Google account to browse and save through the Drive API.
-  - Or open any local `.kdbx`, including one synced by **Google Drive for desktop**
-    (`~/Library/CloudStorage/GoogleDrive-…`). Local files need no Google sign-in; the
-    Drive client uploads your saves. Local saves are atomic: the file is written to an
-    fsynced temp copy (same permissions) and renamed over the original. Only if a sync
-    provider refuses the rename is it written in place, after a `.<name>.bak` copy.
-- Your file stays in your Drive. It is downloaded, decrypted **in memory only**, and
-  re-encrypted before upload.
+- **Local files only, no accounts.** Open any `.kdbx` on this computer, including one in
+  a synced folder (Google Drive for desktop, Dropbox, iCloud Drive): the sync client
+  uploads your saves. Saves are atomic: the file is written to an fsynced temp copy
+  (same permissions) and renamed over the original. Only if a sync provider refuses the
+  rename is it written in place, after a `.<name>.bak` copy.
+- The vault is decrypted **in memory only** and re-encrypted before it is written.
 - **Conflict-safe saves.** If the file changed since you opened it (another device, or
   a newer copy synced onto disk), Sekure merges both versions with KeePass merge rules
-  instead of overwriting. Drive files are compared by `headRevisionId`, local files by
-  mtime and size.
+  instead of overwriting. Files are compared by mtime and size.
 - Touch ID quick unlock, TOTP codes, a password generator, the ⌘K command palette, and a
   clipboard that auto-clears after 30 s. The vault auto-locks when idle, on sleep and on
   screen lock.
@@ -26,46 +22,19 @@ disk**, with **Touch ID** on macOS and **image/PDF attachments** on any entry.
 
 ```bash
 pnpm install
-cp .env.example .env   # then fill in your Google OAuth client (see below)
 pnpm dev
 ```
 
 | Command          | What it does                                              |
 | ---------------- | --------------------------------------------------------- |
 | `pnpm dev`       | electron-vite dev with HMR                                |
-| `pnpm test`      | vitest (vault crypto, OAuth, Drive client, Unlock UI)     |
+| `pnpm test`      | vitest (vault crypto, sources, search, UI)                |
 | `pnpm typecheck` | tsc for main+preload and renderer                         |
 | `pnpm lint`      | eslint (flat config) + prettier                           |
 | `pnpm build:mac` | build and package (`dmg` + `zip`), signed/notarized in CI |
 
 Set `SEKURE_USER_DATA=/some/dir` to run with an isolated profile. This is useful for
 e2e runs or for a second dev instance. Release builds ignore it.
-
-## Google Cloud setup
-
-1. Create a project at <https://console.cloud.google.com> and **enable the Google Drive
-   API** and the **Google Picker API**.
-2. **OAuth consent screen**: set the user type to _External_ and add the scopes
-   `openid`, `email`, `profile` and `https://www.googleapis.com/auth/drive.file`. Leave
-   it in **Testing** and add every user under **Test users** (100 max).
-3. **Credentials**: create an OAuth client ID of type **Desktop app**. Put its ID and
-   secret in `.env` as `MAIN_VITE_GOOGLE_CLIENT_ID` / `MAIN_VITE_GOOGLE_CLIENT_SECRET`.
-   Google does not treat a desktop client secret as confidential. It is still kept out
-   of git and injected at build time.
-4. **Picker**: create an **API key** restricted to the Google Picker API
-   (`MAIN_VITE_GOOGLE_API_KEY`), and copy the project **number** from IAM → Settings
-   (`MAIN_VITE_GOOGLE_APP_ID`).
-
-Sekure asks only for `drive.file`: it sees the vaults it created and the ones you
-choose with **Choose from Google Drive**, which opens the Google Picker in your browser.
-It never sees the rest of your Drive. Builds before this change used the full `drive`
-scope; on update, that grant is revoked and you reconnect and pick your vault once.
-
-> **Testing-mode caveat:** Google expires refresh tokens of apps in _Testing_ after
-> **7 days**, so users have to reconnect Drive weekly. When that happens, Sekure detects
-> `invalid_grant` and returns to the Connect screen. Publishing the consent screen
-> removes the expiry. `drive.file` is not a restricted scope, so publishing does not
-> need Google's restricted-scope security assessment.
 
 ## Auto-type
 
@@ -113,9 +82,9 @@ if it needs ⌘/Ctrl and does not take over a common combination (⌘V, ⌘Q, En
   still holds the copied value.
 - Attachments are decrypted on demand into `blob:` URLs, which are revoked when the
   preview unmounts. SVG attachments are never rendered inline.
-- The Google refresh token is encrypted with Electron `safeStorage` (the macOS Keychain).
-  On Linux, Sekure refuses to store secrets when no keyring is available (Electron's
-  `basic_text` fallback is not encryption).
+- Secrets Sekure keeps (the Touch ID quick-unlock secret) are encrypted with Electron
+  `safeStorage` (the macOS Keychain). On Linux, Sekure refuses to store secrets when no
+  keyring is available (Electron's `basic_text` fallback is not encryption).
 - Release builds flip the Electron fuses (`RunAsNode`, `NODE_OPTIONS`, `--inspect` off;
   asar integrity and `onlyLoadAppFromAsar` on) and exit if started with a debugging
   switch, so another local process cannot run code as Sekure and read its secrets.
@@ -132,8 +101,8 @@ if it needs ⌘/Ctrl and does not take over a common combination (⌘V, ⌘Q, En
   open the vault for enabling Touch ID; the renderer never sends it twice.
 - CSP (`CONTENT_SECURITY_POLICY` in `src/main/scheme.ts`, also sent as a header):
   `connect-src 'self'`, no remote images, `base-uri`/`form-action 'none'`. The dev
-  server's websocket is allowed only in `pnpm dev`. All Google traffic goes through
-  main. Navigation and new windows are denied, and entry links go through main, which
+  server's websocket is allowed only in `pnpm dev`. Network traffic (updates, model
+  downloads) goes through main. Navigation and new windows are denied, and entry links go through main, which
   opens only `http(s)` URLs in the system browser.
 
 ## Releases
@@ -146,8 +115,7 @@ Releases follow the same pipeline as orkestrator:
   electron-updater picks the release up.
 
 Required repository secrets: `PAT_TOKEN`, `APPLE_ID`, `APPLE_ID_PASSWORD`,
-`APPLE_TEAM_ID`, `CSC_LINK` (base64 `.p12`), `CSC_KEY_PASSWORD`, `GOOGLE_CLIENT_ID`,
-`GOOGLE_CLIENT_SECRET`, `GOOGLE_API_KEY`, `GOOGLE_APP_ID`.
+`APPLE_TEAM_ID`, `CSC_LINK` (base64 `.p12`), `CSC_KEY_PASSWORD`.
 
 Workflow actions are pinned to commit SHAs (Dependabot keeps them current), and secrets
 are scoped to the build steps.

@@ -447,7 +447,7 @@ export class VaultSession {
     return this.db.save()
   }
 
-  /** Pull `remote` (the newer copy on Drive) into this database. */
+  /** Pull `remote` (a newer copy saved elsewhere) into this database. */
   merge(remote: kdbxweb.Kdbx): void {
     // KDBX < 4.1 stores no timestamps for Meta/CustomData, so kdbxweb would
     // always keep ours. Take the remote value unless we changed it since the last save.

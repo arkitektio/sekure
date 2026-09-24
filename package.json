@@ -3,14 +3,14 @@
   "productName": "Sekure",
   "version": "0.1.0",
   "license": "MIT",
-  "description": "Open, edit and unlock KeePass vaults stored on Google Drive",
+  "description": "Open, edit and unlock KeePass vaults on your computer",
   "main": "./out/main/index.js",
   "type": "module",
   "author": "jhnnsrs",
-  "homepage": "https://github.com/jhnnsrs/sekure",
+  "homepage": "https://github.com/arkitektio/sekure",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jhnnsrs/sekure.git"
+    "url": "https://github.com/arkitektio/sekure.git"
   },
   "packageManager": "pnpm@11.23.0+sha512.f00082e5b283a199b74e079da28d155c008fe232f44c8a06ea7ddfa014ecf719fc362f790ecc67b28106ddac2afb24c49a9a079159da560b2ce7d1e98efd11af",
   "scripts": {

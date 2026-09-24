@@ -1,6 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AuthStatus } from '../main/google/protocol'
-import type { DriveFile, PickedFile } from '../main/drive/protocol'
 import type { RecentVault, VaultRef } from '../main/sources/protocol'
 import {
   VAULT_EVENT_CHANNEL,
@@ -77,20 +75,6 @@ const api = {
   shell: {
     /** Open an http(s) URL in the default browser (main validates it). */
     openUrl: (url: string): Promise<void> => invoke('shell:openUrl', url)
-  },
-  auth: {
-    status: (): Promise<AuthStatus> => invoke('auth:status'),
-    login: (): Promise<AuthStatus> => invoke('auth:login'),
-    cancel: () => invoke('auth:cancel'),
-    /** `revoked: false` when Google could not confirm revoking the grant. */
-    logout: (): Promise<AuthStatus & { revoked: boolean }> => invoke('auth:logout'),
-    onChange: (cb: (s: AuthStatus) => void) => subscribe('auth:changed', cb)
-  },
-  drive: {
-    list: (search?: string): Promise<DriveFile[]> => invoke('drive:list', search),
-    /** Google Picker in the browser; null when the user cancels. */
-    pick: (): Promise<PickedFile | null> => invoke('drive:pick'),
-    cancelPick: () => invoke('drive:cancelPick')
   },
   sources: {
     describe: (id: string): Promise<VaultRef> => invoke('sources:describe', id),

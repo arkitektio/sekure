@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, ChevronsUpDown, Cloud, FolderOpen, Lock } from 'lucide-react'
+import { Check, ChevronsUpDown, FolderOpen, Lock } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   DropdownMenu,
@@ -12,10 +12,9 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { SourceIcon } from '@/components/SourceIcon'
 import { VaultAvatar } from '@/components/VaultAvatar'
-import { useAuth } from '@/stores/auth'
 import { useVault } from '@/stores/vault'
 import { api, displayError } from '@/lib/api'
-import { isLocalId, unlockPath } from '@/lib/vaults'
+import { unlockPath } from '@/lib/vaults'
 import { useVaultActions } from '../useVaultActions'
 import type { RecentVault } from '../../../../main/sources/protocol'
 
@@ -26,7 +25,6 @@ import type { RecentVault } from '../../../../main/sources/protocol'
  */
 export function VaultSwitcher() {
   const snapshot = useVault((s) => s.snapshot)
-  const connected = useAuth((s) => s.status?.connected)
   const { lock } = useVaultActions()
   const [open, setOpen] = useState(false)
   const [recent, setRecent] = useState<RecentVault[]>([])
@@ -45,9 +43,8 @@ export function VaultSwitcher() {
 
   if (!snapshot) return null
   const current = recent.find((r) => r.id === snapshot.fileId)
-  const location =
-    current?.location ?? (isLocalId(snapshot.fileId) ? 'On this computer' : 'Google Drive')
-  const others = recent.filter((r) => r.id !== snapshot.fileId && (connected || isLocalId(r.id)))
+  const location = current?.location ?? 'On this computer'
+  const others = recent.filter((r) => r.id !== snapshot.fileId)
 
   const openLocal = async () => {
     try {
@@ -112,9 +109,6 @@ export function VaultSwitcher() {
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => void openLocal()}>
           <FolderOpen /> Open a vault file…
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => void lock('/files')}>
-          <Cloud /> {connected ? 'Browse Google Drive…' : 'Connect Google Drive…'}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => void lock()}>

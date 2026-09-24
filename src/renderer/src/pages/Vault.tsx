@@ -45,7 +45,7 @@ export function Vault() {
         if (event.type === 'changed') setSnapshot(event.snapshot)
         if (event.type === 'locked') {
           const { snapshot: current, switchTarget } = useVault.getState()
-          const target = switchTarget ?? (current ? unlockPath(current.fileId) : '/files')
+          const target = switchTarget ?? (current ? unlockPath(current.fileId) : '/')
           reset()
           usePalette.getState().hide()
           if (event.unsaved === 'recovered') {

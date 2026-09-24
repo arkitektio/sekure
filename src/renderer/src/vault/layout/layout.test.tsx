@@ -15,7 +15,13 @@ const api = {
   sources: {
     recent: vi.fn(async () => [
       { id: 'local:/v/work.kdbx', kind: 'local', name: 'work.kdbx', location: '/v', openedAt: '' },
-      { id: 'drive-1', kind: 'drive', name: 'Family.kdbx', location: 'Google Drive', openedAt: '' }
+      {
+        id: 'local:/v/family.kdbx',
+        kind: 'local',
+        name: 'Family.kdbx',
+        location: '/v',
+        openedAt: ''
+      }
     ]),
     pickLocal: vi.fn()
   },
@@ -40,7 +46,6 @@ const { CreatePage } = await import('../pages/CreatePage')
 const { EntryPeople } = await import('../PeoplePicker')
 const { useVault, activePage } = await import('@/stores/vault')
 const { usePalette } = await import('@/stores/palette')
-const { useAuth } = await import('@/stores/auth')
 const { TooltipProvider } = await import('@/components/ui/tooltip')
 
 const entry = (
@@ -197,7 +202,6 @@ describe('list page', () => {
 
 describe('vault switcher', () => {
   it('lists recent vaults and switches by locking, then opening the other', async () => {
-    useAuth.setState({ status: { connected: true } } as never)
     const user = userEvent.setup()
     inRouter(<VaultSwitcher />)
     await user.click(screen.getByRole('button', { name: 'Switch vault' }))
@@ -210,7 +214,7 @@ describe('vault switcher', () => {
     })
     await user.click(family)
     await waitFor(() => expect(api.vault.lock).toHaveBeenCalled())
-    expect(target).toBe('/unlock/drive-1')
+    expect(target).toBe('/unlock/' + encodeURIComponent('local:/v/family.kdbx'))
   })
 })
 

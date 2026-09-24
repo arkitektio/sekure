@@ -451,7 +451,7 @@ export function EntryDetail({ uuid }: { uuid: string }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete “{entryTitle(entry)}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              The entry moves to the recycle bin. The change reaches Google Drive when you save.
+              The entry moves to the recycle bin. The change is written to the file when you save.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

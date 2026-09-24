@@ -1,7 +1,7 @@
 // Where a vault lives. Ids are opaque to the renderer except for the prefix:
-// Drive file ids are used as-is, local files are `local:<absolute path>`.
+// local files are `local:<absolute path>`. A new provider adds a kind and a source.
 
-export type SourceKind = 'drive' | 'local'
+export type SourceKind = 'local'
 
 export const LOCAL_PREFIX = 'local:'
 
@@ -13,7 +13,7 @@ export interface VaultRef {
   id: string
   kind: SourceKind
   name: string
-  /** Human-readable location: the folder path, or "Google Drive". */
+  /** Human-readable location: the folder path. */
   location: string
   /** Local file inside a Google Drive for desktop folder. */
   syncedByDrive?: boolean

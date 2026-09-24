@@ -44,11 +44,6 @@ jobs:
         env:
           NODE_OPTIONS: '--max_old_space_size=4096'
           GH_TOKEN: ${{ github.token }} # electron-builder reads GH_TOKEN
-          # Baked into the main bundle at build time (import.meta.env.MAIN_VITE_*).
-          MAIN_VITE_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-          MAIN_VITE_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          MAIN_VITE_GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          MAIN_VITE_GOOGLE_APP_ID: ${{ secrets.GOOGLE_APP_ID }}
         run: pnpm run build:linux
 
       # Import the signing cert ourselves instead of passing CSC_LINK.
@@ -80,11 +75,6 @@ jobs:
         env:
           NODE_OPTIONS: '--max_old_space_size=4096'
           GH_TOKEN: ${{ github.token }} # electron-builder reads GH_TOKEN
-          # Baked into the main bundle at build time (import.meta.env.MAIN_VITE_*).
-          MAIN_VITE_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-          MAIN_VITE_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          MAIN_VITE_GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          MAIN_VITE_GOOGLE_APP_ID: ${{ secrets.GOOGLE_APP_ID }}
           # Notarization (auto-detected by electron-builder)
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
@@ -96,9 +86,4 @@ jobs:
         env:
           NODE_OPTIONS: '--max_old_space_size=4096'
           GH_TOKEN: ${{ github.token }} # electron-builder reads GH_TOKEN
-          # Baked into the main bundle at build time (import.meta.env.MAIN_VITE_*).
-          MAIN_VITE_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-          MAIN_VITE_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          MAIN_VITE_GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          MAIN_VITE_GOOGLE_APP_ID: ${{ secrets.GOOGLE_APP_ID }}
         run: pnpm run build:win

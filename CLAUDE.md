@@ -31,9 +31,8 @@ Tailwind v4 + shadcn (radix-vega), zustand, react-hook-form + zod, vitest, pnpm 
   (`checkKdfParameters`). Preferences imported from a vault never enable auto-type, and
   a shortcut must pass `isSafeGlobalShortcut`. Protected standard fields (Title,
   UserName, URL, Notes) stay out of snapshots, the same way passwords do.
-- Google access is `drive.file` only. Existing vaults are granted through the Picker
-  (`drive/picker.ts`, served on loopback in the system browser), never by widening the
-  scope.
+- **Vaults are local files only.** There is no cloud account or API integration (Google
+  Drive support was removed). A synced folder works because its client syncs the file.
 - **Auto-type values go through the clipboard only**, never argv, a log line or an event.
   `AutoTypeModule` restores the previous clipboard right after the paste. The injector
   in `src/main/autotype/injector.ts` takes an injected `exec`; tests stub it so they
@@ -61,10 +60,10 @@ Tailwind v4 + shadcn (radix-vega), zustand, react-hook-form + zod, vitest, pnpm 
 ## Layout
 
 - `src/main/modules/*`: `AppModule`s registered with `AppManager`, wired over `IpcTransport`.
-- `src/main/{vault,google,drive,sources,autotype,preferences}`: pure, electron-free logic plus `protocol.ts`
+- `src/main/{vault,sources,autotype,preferences}`: pure, electron-free logic plus `protocol.ts`
   types. It is unit-tested in node.
-- `src/main/sources/VaultSource.ts` defines where a vault lives: `DriveSource` (API) or
-  `LocalSource` (disk, id `local:<abs path>`). `VaultModule` only talks to a
+- `src/main/sources/VaultSource.ts` defines where a vault lives: `LocalSource` (disk, id
+  `local:<abs path>`). `VaultModule` only talks to a
   `VaultSource`, so adding a provider means adding a source, not touching the vault.
   Local ids contain slashes, so always build routes with `unlockPath()` in
   `lib/vaults.ts`.

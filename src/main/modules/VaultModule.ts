@@ -196,7 +196,7 @@ export class VaultModule implements AppModule {
     return this.session?.fileId
   }
 
-  /** Read (Drive or disk) and decrypt. Used by IPC and by Touch ID unlock. */
+  /** Read from disk and decrypt. Used by IPC and by Touch ID unlock. */
   async open(fileId: string, password: string, keyFile?: Uint8Array): Promise<VaultSnapshot> {
     if (this.session?.dirty) {
       throw new VaultError('Unknown', 'Save or discard changes to the open vault first')

@@ -9,10 +9,7 @@ import { AppManager } from './modules/AppManager'
 import { IpcTransport } from './modules/IpcTransport'
 import { WindowManager } from './modules/WindowManager'
 import { AppUpdater } from './modules/AppUpdater'
-import { GoogleAuthModule } from './modules/GoogleAuthModule'
-import { DriveModule } from './modules/DriveModule'
 import { SourcesModule } from './modules/SourcesModule'
-import { isLocalId } from './sources/protocol'
 import { VaultModule } from './modules/VaultModule'
 import { BiometricModule } from './modules/BiometricModule'
 import { AutoTypeModule } from './modules/AutoTypeModule'
@@ -140,21 +137,10 @@ if (!app.requestSingleInstanceLock()) {
 
     const ipc = new IpcTransport()
     const windows = new WindowManager(ipc)
-    const auth = new GoogleAuthModule(ipc)
-    const drive = new DriveModule(ipc, auth)
-    const sources = new SourcesModule(ipc, drive, auth)
+    const sources = new SourcesModule(ipc)
     const vault = new VaultModule(ipc, windows, sources)
 
-    auth.onStatusChange((status) => {
-      windows.broadcast('auth:changed', status)
-      // Disconnecting Drive closes a vault that came from it (local ones stay).
-      const open = vault.openFileId
-      if (!status.connected && open && !isLocalId(open)) vault.lock('manual')
-    })
-
     const manager = new AppManager()
-    manager.register(auth)
-    manager.register(drive)
     manager.register(sources)
     manager.register(vault)
     manager.register(new BiometricModule(ipc, vault))

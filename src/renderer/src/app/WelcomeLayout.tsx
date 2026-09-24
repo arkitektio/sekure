@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { SettingsButton } from '@/components/SettingsDialog'
-import { AccountMenu } from '@/components/AccountMenu'
 import { usePlatform } from '@/hooks/usePlatform'
 import { api } from '@/lib/api'
 import { WindowControls } from './WindowControls'
@@ -26,7 +25,6 @@ export function WelcomeLayout({ children }: { children: ReactNode }) {
         <div className="app-no-drag flex items-center">
           <SettingsButton />
           <ThemeToggle />
-          <AccountMenu />
         </div>
         <WindowControls />
       </div>

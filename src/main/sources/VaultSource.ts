@@ -1,9 +1,6 @@
 import { randomBytes } from 'crypto'
 import { copyFile, open, readFile, realpath, rename, stat, unlink, writeFile } from 'fs/promises'
 import { basename, dirname, join } from 'path'
-import { DriveError, type DriveClient } from '../drive/DriveClient'
-import { VaultError } from '../vault/VaultSession'
-import type { DriveFile } from '../drive/protocol'
 import { localId, type VaultRef } from './protocol'
 
 /**
@@ -27,50 +24,6 @@ export interface VaultSource {
 export class RevisionConflict extends Error {
   constructor() {
     super('The vault was changed elsewhere while saving')
-  }
-}
-
-/** Drive bumps `headRevisionId` on every content change; fall back to mtime. */
-export const driveRevision = (f: DriveFile) => f.headRevisionId ?? f.modifiedTime
-
-export class DriveSource implements VaultSource {
-  constructor(
-    private client: DriveClient,
-    private fileId: string
-  ) {}
-
-  async describe(): Promise<VaultRef> {
-    try {
-      const meta = await this.client.metadata(this.fileId)
-      return { id: this.fileId, kind: 'drive', name: meta.name, location: 'Google Drive' }
-    } catch (e) {
-      // With drive.file, a file Sekure was never given looks like a missing one.
-      if (e instanceof DriveError && e.status === 404) {
-        throw new VaultError(
-          'NotFound',
-          'Sekure has no access to this file. Choose it again with “Choose from Google Drive”.'
-        )
-      }
-      throw e
-    }
-  }
-
-  async read() {
-    // Revision first: if the file changes between the two calls we err on the
-    // side of an unnecessary merge rather than a lost update.
-    const revision = await this.revision()
-    const bytes = await this.client.download(this.fileId)
-    return { bytes, revision }
-  }
-
-  async revision() {
-    return driveRevision(await this.client.metadata(this.fileId))
-  }
-
-  async write(bytes: ArrayBuffer, expected?: string) {
-    // Drive v3 has no If-Match on media uploads; check as late as we can.
-    if (expected !== undefined && (await this.revision()) !== expected) throw new RevisionConflict()
-    return driveRevision(await this.client.upload(this.fileId, bytes))
   }
 }
 

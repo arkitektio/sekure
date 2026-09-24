@@ -1,9 +1,7 @@
-import { Cloud, HardDrive } from 'lucide-react'
+import { HardDrive } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { isLocalId } from '@/lib/vaults'
 
-/** Cloud for Drive-API vaults, disk for local files (incl. Drive-for-desktop synced). */
-export function SourceIcon({ id, className }: { id: string; className?: string }) {
-  const Icon = isLocalId(id) ? HardDrive : Cloud
-  return <Icon className={cn('size-3.5', className)} />
+/** Where a vault lives: a file on this computer (the only source kind today). */
+export function SourceIcon({ className }: { id?: string; className?: string }) {
+  return <HardDrive className={cn('size-3.5', className)} />
 }

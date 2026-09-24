@@ -6,24 +6,12 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
 import { AppShell } from '@/app/AppShell'
 import { Home } from '@/pages/Home'
-import { FilePicker } from '@/pages/FilePicker'
 import { Unlock } from '@/pages/Unlock'
 import { Vault } from '@/pages/Vault'
 import { Deidentify } from '@/pages/Deidentify'
 import { QuickFill } from '@/pages/QuickFill'
 import { useVault } from '@/stores/vault'
-import { useAuth } from '@/stores/auth'
 import { api } from '@/lib/api'
-
-function AuthSync() {
-  const refresh = useAuth((s) => s.refresh)
-  const set = useAuth((s) => s.set)
-  useEffect(() => {
-    void refresh()
-    return api.auth.onChange(set)
-  }, [refresh, set])
-  return null
-}
 
 /** Follow a vault unlocked in the auto-type popup (main window only). */
 function VaultFollow() {
@@ -58,7 +46,6 @@ export default function App() {
       <TooltipProvider delayDuration={400}>
         <BrandSync />
         <HashRouter>
-          <AuthSync />
           <Routes>
             {/* The auto-type popup: its own frameless window, no title bar. */}
             <Route path="/quick" element={<QuickFill />} />
@@ -66,9 +53,6 @@ export default function App() {
             <Route path="/deidentify" element={<Deidentify />} />
             <Route element={<MainLayout />}>
               <Route path="/" element={<Home />} />
-              {/* The welcome screen connects Google Drive now. */}
-              <Route path="/connect" element={<Navigate to="/" replace />} />
-              <Route path="/files" element={<FilePicker />} />
               <Route path="/unlock/:fileId" element={<Unlock />} />
               <Route path="/vault" element={<Vault />} />
               <Route path="*" element={<Navigate to="/" replace />} />

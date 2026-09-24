@@ -143,11 +143,7 @@ export function Unlock() {
             >
               <SourceIcon id={ref.id} className="size-3 shrink-0" />
               <span className="truncate">
-                {ref.kind === 'local'
-                  ? ref.syncedByDrive
-                    ? 'Synced by Google Drive for desktop'
-                    : ref.location
-                  : 'Google Drive'}
+                {ref.syncedByDrive ? 'Synced by Google Drive for desktop' : ref.location}
               </span>
             </p>
           )}

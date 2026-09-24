@@ -3,7 +3,6 @@ import { ArrowLeft, ArrowRight, Lock, Save } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Kbd } from '@/components/ui/kbd'
 import { SettingsButton } from '@/components/SettingsDialog'
-import { AccountMenu } from '@/components/AccountMenu'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useWindowState } from '@/hooks/useChrome'
 import { useVault } from '@/stores/vault'
@@ -105,7 +104,6 @@ export function VaultLayout({ children }: { children: ReactNode }) {
           <VaultSwitcher />
           <div className="app-no-drag flex items-center">
             <SettingsButton />
-            <AccountMenu />
           </div>
         </div>
         <RailResizer />

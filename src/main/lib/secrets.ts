@@ -3,8 +3,7 @@ import Store from 'electron-store'
 
 /**
  * Small wrapper around `safeStorage` (macOS Keychain / DPAPI / libsecret) for
- * values that must never sit on disk in plaintext: the Google refresh token and
- * the Touch ID quick-unlock secrets. Ciphertext lives in its own store file.
+ * values that must never sit on disk in plaintext: the Touch ID quick-unlock secrets. Ciphertext lives in its own store file.
  */
 export class SecretStore {
   private store = new Store<Record<string, string>>({ name: 'secrets' })
@@ -12,7 +11,7 @@ export class SecretStore {
   /**
    * On Linux without a keyring, Electron falls back to `basic_text`: a
    * hard-coded key, i.e. plaintext with extra steps. Treat that as unavailable
-   * rather than storing a Drive token or master password that way.
+   * rather than storing a master password that way.
    */
   available(): boolean {
     if (!safeStorage.isEncryptionAvailable()) return false
