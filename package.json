@@ -1,7 +1,7 @@
 {
   "name": "sekure",
   "productName": "Sekure",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "license": "MIT",
   "description": "Open, edit and unlock KeePass vaults on your computer",
   "main": "./out/main/index.js",

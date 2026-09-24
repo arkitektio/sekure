@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/arkitektio/sekure/compare/v1.1.0...v1.1.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* too many unlocks are gone ([91d62e1](https://github.com/arkitektio/sekure/commit/91d62e1bc96a7cfca0653f6c21fe31ad3993bdc6))
+
 # [1.1.0](https://github.com/arkitektio/sekure/compare/v1.0.0...v1.1.0) (2026-09-24)
 
 
