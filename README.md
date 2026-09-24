@@ -9,9 +9,9 @@ disk**, with **Touch ID** on macOS and **image/PDF attachments** on any entry.
   - Connect your Google account to browse and save through the Drive API.
   - Or open any local `.kdbx`, including one synced by **Google Drive for desktop**
     (`~/Library/CloudStorage/GoogleDrive-…`). Local files need no Google sign-in; the
-    Drive client uploads your saves. Local saves are atomic: the file is written to a
-    temp copy and renamed over the original, with a fallback for providers that refuse
-    the rename.
+    Drive client uploads your saves. Local saves are atomic: the file is written to an
+    fsynced temp copy (same permissions) and renamed over the original. Only if a sync
+    provider refuses the rename is it written in place, after a `.<name>.bak` copy.
 - Your file stays in your Drive. It is downloaded, decrypted **in memory only**, and
   re-encrypted before upload.
 - **Conflict-safe saves.** If the file changed since you opened it (another device, or
@@ -39,25 +39,33 @@ pnpm dev
 | `pnpm build:mac` | build and package (`dmg` + `zip`), signed/notarized in CI |
 
 Set `SEKURE_USER_DATA=/some/dir` to run with an isolated profile. This is useful for
-e2e runs or for a second dev instance.
+e2e runs or for a second dev instance. Release builds ignore it.
 
 ## Google Cloud setup
 
 1. Create a project at <https://console.cloud.google.com> and **enable the Google Drive
-   API**.
+   API** and the **Google Picker API**.
 2. **OAuth consent screen**: set the user type to _External_ and add the scopes
-   `openid`, `email`, `profile` and `https://www.googleapis.com/auth/drive`. Leave it in
-   **Testing** and add every user under **Test users** (100 max).
+   `openid`, `email`, `profile` and `https://www.googleapis.com/auth/drive.file`. Leave
+   it in **Testing** and add every user under **Test users** (100 max).
 3. **Credentials**: create an OAuth client ID of type **Desktop app**. Put its ID and
    secret in `.env` as `MAIN_VITE_GOOGLE_CLIENT_ID` / `MAIN_VITE_GOOGLE_CLIENT_SECRET`.
    Google does not treat a desktop client secret as confidential. It is still kept out
    of git and injected at build time.
+4. **Picker**: create an **API key** restricted to the Google Picker API
+   (`MAIN_VITE_GOOGLE_API_KEY`), and copy the project **number** from IAM → Settings
+   (`MAIN_VITE_GOOGLE_APP_ID`).
+
+Sekure asks only for `drive.file`: it sees the vaults it created and the ones you
+choose with **Choose from Google Drive**, which opens the Google Picker in your browser.
+It never sees the rest of your Drive. Builds before this change used the full `drive`
+scope; on update, that grant is revoked and you reconnect and pick your vault once.
 
 > **Testing-mode caveat:** Google expires refresh tokens of apps in _Testing_ after
 > **7 days**, so users have to reconnect Drive weekly. When that happens, Sekure detects
 > `invalid_grant` and returns to the Connect screen. Publishing the consent screen
-> removes the expiry. `drive` is a _restricted_ scope, so a published app with more than
-> 100 users needs Google's security verification.
+> removes the expiry. `drive.file` is not a restricted scope, so publishing does not
+> need Google's restricted-scope security assessment.
 
 ## Auto-type
 
@@ -77,7 +85,8 @@ later. The value never appears on a command line.
 - **Windows** uses PowerShell `SendKeys`.
 - **Linux** uses `xdotool` on X11. On Wayland it uses `wtype` if installed, and global
   shortcuts depend on the compositor. Otherwise it falls back to the clipboard.
-- For those ~400 ms, a clipboard manager can see the value.
+- For those ~400 ms, a clipboard manager can see the value. If the previous clipboard
+  held a value Sekure copied, it is cleared instead of restored.
 
 ## Appearance and synced settings
 
@@ -87,25 +96,45 @@ this device and also written into the open vault (KDBX `Meta/CustomData`, key
 `sekure.preferences`). Save the vault, and any device that opens it takes over the same
 color and shortcut. Other KeePass apps ignore the key.
 
+A vault never turns auto-type on for a device, and a shortcut it carries is applied only
+if it needs ⌘/Ctrl and does not take over a common combination (⌘V, ⌘Q, Enter, …).
+
 ## Security model
 
 - **All secrets live in the main process.** The renderer is sandboxed, has
   `contextIsolation` on, and has no Node. It receives only a sanitized tree (titles,
   usernames, URLs, flags) and requests a password or protected field one at a time
-  (`vault:reveal` / `vault:copy`).
+  (`vault:reveal` / `vault:copy`). Titles, usernames, URLs or notes marked protected in
+  KeePass are treated the same way. Revealed values mask again after 30 s or when the
+  window loses focus.
+- IPC is accepted only from the top frame of Sekure's own windows. Every web permission
+  (clipboard read, notifications, devices…) is denied.
 - Clipboard writes happen in main and are cleared after 30 s, but only if the clipboard
   still holds the copied value.
 - Attachments are decrypted on demand into `blob:` URLs, which are revoked when the
   preview unmounts. SVG attachments are never rendered inline.
 - The Google refresh token is encrypted with Electron `safeStorage` (the macOS Keychain).
+  On Linux, Sekure refuses to store secrets when no keyring is available (Electron's
+  `basic_text` fallback is not encryption).
+- Release builds flip the Electron fuses (`RunAsNode`, `NODE_OPTIONS`, `--inspect` off;
+  asar integrity and `onlyLoadAppFromAsar` on) and exit if started with a debugging
+  switch, so another local process cannot run code as Sekure and read its secrets.
+- Vault headers asking for extreme key derivation (Argon2 over 1 GiB / 100 iterations,
+  AES-KDF over 10⁸ rounds) are rejected before the KDF runs.
+- If an automatic lock cannot save open edits (offline, disk full), Sekure still locks
+  and keeps them in an encrypted recovery copy in its data folder (`recovery/`).
 - **Touch ID** uses KeePassXC-style quick unlock. The master password is sealed with
   `safeStorage` and released only after `systemPreferences.promptTouchID()` succeeds.
   The Keychain item itself is not bound to biometry, so Touch ID is enforced by the app
   rather than by the Secure Enclave. Future hardening would be a native Keychain item
   with `kSecAccessControlBiometryCurrentSet`. If the master password changes elsewhere,
-  the stored secret is dropped automatically.
-- CSP: `connect-src 'self'`. All Google traffic goes through main. Navigation and new
-  windows are denied, and external links open in the system browser.
+  the stored secret is dropped automatically. Main keeps the password it just used to
+  open the vault for enabling Touch ID; the renderer never sends it twice.
+- CSP (`CONTENT_SECURITY_POLICY` in `src/main/scheme.ts`, also sent as a header):
+  `connect-src 'self'`, no remote images, `base-uri`/`form-action 'none'`. The dev
+  server's websocket is allowed only in `pnpm dev`. All Google traffic goes through
+  main. Navigation and new windows are denied, and entry links go through main, which
+  opens only `http(s)` URLs in the system browser.
 
 ## Releases
 
@@ -118,7 +147,15 @@ Releases follow the same pipeline as orkestrator:
 
 Required repository secrets: `PAT_TOKEN`, `APPLE_ID`, `APPLE_ID_PASSWORD`,
 `APPLE_TEAM_ID`, `CSC_LINK` (base64 `.p12`), `CSC_KEY_PASSWORD`, `GOOGLE_CLIENT_ID`,
-`GOOGLE_CLIENT_SECRET`.
+`GOOGLE_CLIENT_SECRET`, `GOOGLE_API_KEY`, `GOOGLE_APP_ID`.
+
+Workflow actions are pinned to commit SHAs (Dependabot keeps them current), and secrets
+are scoped to the build steps.
+
+> **Windows and Linux updates are not signature-checked yet.** Only macOS updates are
+> verified against the code signature. Before shipping Windows to users, add a code
+> signing certificate and set `win.signtoolOptions.publisherName` in
+> `electron-builder.yml`, so electron-updater verifies each download.
 
 > Local `electron-builder --dir` builds are only ad-hoc signed. With hardened runtime
 > enabled they fail macOS library validation ("different Team IDs"). For a local smoke

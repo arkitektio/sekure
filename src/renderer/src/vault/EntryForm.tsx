@@ -34,6 +34,8 @@ const schema = z.object({
   title: z.string().trim(),
   username: z.string(),
   password: z.string(),
+  /** The existing password, not loaded into the form: kept unless changed. */
+  passwordUntouched: z.boolean(),
   url: z.string(),
   tags: z.string(),
   notes: z.string(),
@@ -87,6 +89,7 @@ export function EntryForm({ uuid }: { uuid: string | 'new' }) {
       title: '',
       username: '',
       password: '',
+      passwordUntouched: false,
       url: '',
       tags: '',
       notes: '',
@@ -101,17 +104,28 @@ export function EntryForm({ uuid }: { uuid: string | 'new' }) {
     let alive = true
     void (async () => {
       const entry = await api.vault.entry(uuid)
-      const password = entry.hasPassword ? await api.vault.reveal(uuid, 'Password') : ''
+      // The password stays in main until the user reveals or replaces it.
+      // Protected Title/UserName/URL/Notes (rare: set in KeePass) are loaded
+      // because the form edits them as plain inputs.
+      const standard = async (field: 'Title' | 'UserName' | 'URL' | 'Notes', plain: string) =>
+        entry.protectedFields.includes(field) ? api.vault.reveal(uuid, field) : plain
+      const [title, username, url, notes] = await Promise.all([
+        standard('Title', entry.title),
+        standard('UserName', entry.username),
+        standard('URL', entry.url),
+        standard('Notes', entry.notes)
+      ])
       if (!alive) return
       const entryType = getType(entry.type) ?? loginType()
       form.reset({
         type: entryType.id,
-        title: entry.title,
-        username: entry.username,
-        password,
-        url: entry.url,
+        title,
+        username,
+        password: '',
+        passwordUntouched: entry.hasPassword,
+        url,
         tags: entry.tags.join(', '),
-        notes: entry.notes,
+        notes,
         customFields: withTypeRows(
           entryType,
           entry.customFields.map((f) => ({
@@ -156,7 +170,7 @@ export function EntryForm({ uuid }: { uuid: string | 'new' }) {
       const i = keys.indexOf(f.key)
       const path = f.standard ? std : (`customFields.${i}.value` as const)
       const value = f.standard ? v[std] : (rows[i]?.value ?? '')
-      const kept = !f.standard && rows[i]?.untouched
+      const kept = f.standard ? f.key === 'Password' && v.passwordUntouched : rows[i]?.untouched
       const problem =
         f.required && !kept && !value.trim()
           ? `${f.label} is required`
@@ -181,7 +195,7 @@ export function EntryForm({ uuid }: { uuid: string | 'new' }) {
       type: t.id,
       title: v.title || suggestTitle(t, valueOf),
       username: v.username,
-      password: v.password,
+      password: v.passwordUntouched ? undefined : v.password,
       url: v.url.trim(),
       notes: v.notes,
       tags: v.tags
@@ -287,6 +301,7 @@ export function EntryForm({ uuid }: { uuid: string | 'new' }) {
                       field={f}
                       name={STANDARD_INPUT[f.key]}
                       isNew={isNew}
+                      uuid={isNew ? undefined : uuid}
                     />
                   ) : (
                     <TypedInput
@@ -409,16 +424,34 @@ function StandardInput({
   form,
   field,
   name,
-  isNew
+  isNew,
+  uuid
 }: {
   form: Form
   field: TypeField
   name: StandardName
   isNew: boolean
+  uuid: string | undefined
 }) {
   const [show, setShow] = useState(isNew)
   const error = form.formState.errors[name]
   const id = `std-${name}`
+  const untouched = form.watch('passwordUntouched')
+
+  // The existing password is fetched only when the user asks to see it.
+  const togglePassword = async () => {
+    if (show) return setShow(false)
+    if (untouched && uuid) {
+      try {
+        form.setValue('password', await api.vault.reveal(uuid, 'Password'))
+        form.setValue('passwordUntouched', false)
+      } catch (e) {
+        toast.error(displayError(e))
+        return
+      }
+    }
+    setShow(true)
+  }
   return (
     <>
       <Label htmlFor={id}>{field.label}</Label>
@@ -430,13 +463,16 @@ function StandardInput({
               type={show ? 'text' : 'password'}
               autoComplete="off"
               className="pr-9 font-mono"
+              placeholder={untouched ? '•••••••• (unchanged)' : undefined}
               aria-invalid={!!error}
-              {...form.register('password')}
+              {...form.register('password', {
+                onChange: () => form.setValue('passwordUntouched', false)
+              })}
             />
             <button
               type="button"
               className="absolute top-1/2 right-2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
-              onClick={() => setShow((s) => !s)}
+              onClick={() => void togglePassword()}
               aria-label={show ? `Hide ${field.label}` : `Show ${field.label}`}
             >
               {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
@@ -445,6 +481,7 @@ function StandardInput({
           <PasswordGenerator
             onUse={(pw) => {
               form.setValue('password', pw, { shouldDirty: true })
+              form.setValue('passwordUntouched', false)
               setShow(true)
             }}
           />

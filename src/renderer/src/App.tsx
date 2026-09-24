@@ -10,6 +10,7 @@ import { Connect } from '@/pages/Connect'
 import { FilePicker } from '@/pages/FilePicker'
 import { Unlock } from '@/pages/Unlock'
 import { Vault } from '@/pages/Vault'
+import { Deidentify } from '@/pages/Deidentify'
 import { QuickFill } from '@/pages/QuickFill'
 import { useVault } from '@/stores/vault'
 import { useAuth } from '@/stores/auth'
@@ -62,6 +63,8 @@ export default function App() {
           <Routes>
             {/* The auto-type popup: its own frameless window, no title bar. */}
             <Route path="/quick" element={<QuickFill />} />
+            {/* The deidentify review popup, also frameless. */}
+            <Route path="/deidentify" element={<Deidentify />} />
             <Route element={<MainLayout />}>
               <Route path="/" element={<Home />} />
               <Route path="/connect" element={<Connect />} />

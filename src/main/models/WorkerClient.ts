@@ -1,36 +1,27 @@
 import type { Worker } from 'worker_threads'
-import type { Embedder } from './SearchIndex'
 
-export interface WorkerRequest {
-  id: number
-  texts: string[]
-  kind: 'query' | 'passage'
-}
-
-export type WorkerResponse =
+/** Messages a model worker sends back (see `serveModel` in workerHost.ts). */
+export type WorkerResponse<T> =
   | { type: 'ready' }
   | { type: 'failed'; error: string }
-  | { type: 'result'; id: number; vectors: Float32Array[] }
+  | { type: 'result'; id: number; value: T }
   | { type: 'error'; id: number; error: string }
 
-/** An `Embedder` backed by `embedder.worker.ts`. */
-export class WorkerEmbedder implements Embedder {
+/** Request/response over a worker thread that loads a model first. */
+export class WorkerClient<Req extends object, Res> {
   readonly ready: Promise<void>
   private nextId = 1
-  private pending = new Map<
-    number,
-    { resolve: (v: Float32Array[]) => void; reject: (e: Error) => void }
-  >()
+  private pending = new Map<number, { resolve: (v: Res) => void; reject: (e: Error) => void }>()
 
   constructor(private worker: Worker) {
     this.ready = new Promise((resolve, reject) => {
-      worker.on('message', (msg: WorkerResponse) => {
+      worker.on('message', (msg: WorkerResponse<Res>) => {
         if (msg.type === 'ready') resolve()
         else if (msg.type === 'failed') reject(new Error(msg.error))
         else {
           const p = this.pending.get(msg.id)
           this.pending.delete(msg.id)
-          if (msg.type === 'result') p?.resolve(msg.vectors)
+          if (msg.type === 'result') p?.resolve(msg.value)
           else p?.reject(new Error(msg.error))
         }
       })
@@ -38,15 +29,20 @@ export class WorkerEmbedder implements Embedder {
         reject(e)
         this.failAll(e)
       })
-      worker.on('exit', () => this.failAll(new Error('Embedding worker stopped')))
+      worker.on('exit', () => {
+        reject(new Error('Model worker stopped'))
+        this.failAll(new Error('Model worker stopped'))
+      })
     })
+    // Callers that never await `ready` must not see an unhandled rejection.
+    this.ready.catch(() => {})
   }
 
-  embed(texts: string[], kind: 'query' | 'passage'): Promise<Float32Array[]> {
+  call(req: Req): Promise<Res> {
     const id = this.nextId++
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject })
-      this.worker.postMessage({ id, texts, kind } satisfies WorkerRequest)
+      this.worker.postMessage({ ...req, id })
     })
   }
 

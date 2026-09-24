@@ -5,6 +5,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { ALL_ENTRIES, typeFilter, useVault } from '@/stores/vault'
 import { cn } from '@/lib/utils'
+import { entryTitle } from '@/lib/api'
 import { renderSummaryIcon } from './icons'
 import { NewEntryMenu } from './NewEntryMenu'
 import { rankEntries, useSearch } from './useSearch'
@@ -61,7 +62,7 @@ export function EntryList() {
           {renderSummaryIcon(e, 'size-4')}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{e.title || '(untitled)'}</div>
+          <div className="truncate text-sm font-medium">{entryTitle(e)}</div>
           <div className="truncate text-xs text-muted-foreground">{e.username || e.url || ' '}</div>
         </div>
         <div className="flex shrink-0 items-center gap-1 text-muted-foreground">

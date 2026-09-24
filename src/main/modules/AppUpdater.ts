@@ -90,9 +90,13 @@ export class AppUpdater implements AppModule {
       try {
         const next: UpdateChannel = channel === 'next' ? 'next' : 'latest'
         this.store.set(STORE_KEY, next)
-        this.applyChannel(next)
-        const result = await autoUpdater.checkForUpdates()
-        return { success: true, result }
+        this.applyChannel(next, true)
+        try {
+          const result = await autoUpdater.checkForUpdates()
+          return { success: true, result }
+        } finally {
+          autoUpdater.allowDowngrade = false
+        }
       } catch (error) {
         console.error('Set update channel failed:', error)
         return { success: false, error: String(error) }
@@ -115,10 +119,11 @@ export class AppUpdater implements AppModule {
   /**
    * Map the user-facing channel to electron-updater. "next" reads the standard
    * `beta.yml` carrier and allows prereleases; "latest" is stable-only.
-   * allowDowngrade lets a Next→Stable switch move to a lower stable version.
+   * `allowDowngrade` is only for the check right after a Next→Stable switch
+   * (to move to a lower stable version). Left on, anyone who can edit a
+   * release could roll clients back to an older, vulnerable build.
    */
-  private applyChannel(channel: UpdateChannel) {
-    autoUpdater.allowDowngrade = true
+  private applyChannel(channel: UpdateChannel, allowDowngrade = false) {
     if (channel === 'next') {
       autoUpdater.allowPrerelease = true
       autoUpdater.channel = 'beta'
@@ -126,6 +131,8 @@ export class AppUpdater implements AppModule {
       autoUpdater.allowPrerelease = false
       autoUpdater.channel = 'latest'
     }
+    // Set after `channel`: electron-updater's channel setter turns it on.
+    autoUpdater.allowDowngrade = allowDowngrade
   }
 
   /**

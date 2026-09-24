@@ -1,20 +1,23 @@
 import { createHash } from 'crypto'
-import { createWriteStream } from 'fs'
+import { createReadStream, createWriteStream } from 'fs'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
-import { MODEL } from './protocol'
+import { modelBytes, type ModelSpec } from './spec'
 
 export type FetchFn = (url: string) => Promise<Response>
 
 const VERIFIED = '.verified'
 
-export const modelUrl = (path: string) =>
-  `https://huggingface.co/${MODEL.repo}/resolve/${MODEL.revision}/${path}`
+export const modelUrl = (spec: ModelSpec, path: string) =>
+  `https://huggingface.co/${spec.repo}/resolve/${spec.revision}/${path}`
+
+/** Where a model lives under `root` (e.g. `userData/models`). */
+export const modelDir = (root: string, spec: ModelSpec) => join(root, spec.id, spec.revision)
 
 /** Whether `dir` holds the complete, verified model. */
-export async function hasModel(dir: string): Promise<boolean> {
+export async function hasModel(dir: string, spec: ModelSpec): Promise<boolean> {
   try {
-    return (await readFile(join(dir, VERIFIED), 'utf8')).trim() === MODEL.revision
+    return (await readFile(join(dir, VERIFIED), 'utf8')).trim() === spec.revision
   } catch {
     return false
   }
@@ -26,14 +29,15 @@ export async function hasModel(dir: string): Promise<boolean> {
  */
 export async function ensureModel(
   dir: string,
+  spec: ModelSpec,
   fetchFn: FetchFn,
   onProgress: (fraction: number) => void = () => {}
 ): Promise<void> {
-  if (await hasModel(dir)) return
-  const total = MODEL.files.reduce((n, f) => n + f.size, 0)
+  if (await hasModel(dir, spec)) return
+  const total = modelBytes(spec)
   let done = 0
 
-  for (const file of MODEL.files) {
+  for (const file of spec.files) {
     const target = join(dir, file.path)
     await mkdir(dirname(target), { recursive: true })
     if (await matches(target, file.sha256)) {
@@ -42,7 +46,7 @@ export async function ensureModel(
       continue
     }
 
-    const res = await fetchFn(modelUrl(file.path))
+    const res = await fetchFn(modelUrl(spec, file.path))
     if (!res.ok || !res.body) throw new Error(`Download of ${file.path} failed (${res.status})`)
     const part = `${target}.part`
     const hash = createHash('sha256')
@@ -71,9 +75,10 @@ export async function ensureModel(
     }
     await rename(part, target)
   }
-  await writeFile(join(dir, VERIFIED), MODEL.revision)
+  await writeFile(join(dir, VERIFIED), spec.revision)
 }
 
+/** Streamed, so a half-gigabyte model is never read into memory at once. */
 async function matches(path: string, sha256: string): Promise<boolean> {
   try {
     await stat(path)
@@ -81,9 +86,8 @@ async function matches(path: string, sha256: string): Promise<boolean> {
     return false
   }
   const hash = createHash('sha256')
-    .update(await readFile(path))
-    .digest('hex')
-  return hash === sha256
+  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer)
+  return hash.digest('hex') === sha256
 }
 
 export async function removeModel(dir: string) {

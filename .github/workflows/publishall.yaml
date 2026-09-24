@@ -2,22 +2,17 @@ name: Publish a Release
 on:
   release:
     types: [published, prereleased] # stable from main, prerelease from next
-  workflow_dispatch: {} # lets the packaging matrix be dry-run on a branch
+  workflow_dispatch: {} # dry-run the packaging matrix (main / next only, see `if:`)
 
-permissions: write-all
-
-env:
-  GH_TOKEN: ${{ github.token }} # electron-builder reads GH_TOKEN
-  # Notarization (auto-detected by electron-builder)
-  APPLE_ID: ${{ secrets.APPLE_ID }}
-  APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-  # Baked into the main bundle at build time (import.meta.env.MAIN_VITE_*).
-  MAIN_VITE_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-  MAIN_VITE_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+# Upload release assets only. Secrets are scoped to the build steps below, so
+# `pnpm install` (and any dependency install script) never sees them.
+permissions:
+  contents: write
 
 jobs:
   release:
+    # A manual dry run builds signed, notarized apps: only from reviewed branches.
+    if: github.event_name == 'release' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next'
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -27,14 +22,16 @@ jobs:
 
     steps:
       - name: Check out Git repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       # Must run before setup-node, and stay on PATH: electron-builder's
       # PnpmNodeModulesCollector shells out to `pnpm list --prod --json`.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: 'pnpm'
@@ -46,6 +43,12 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         env:
           NODE_OPTIONS: '--max_old_space_size=4096'
+          GH_TOKEN: ${{ github.token }} # electron-builder reads GH_TOKEN
+          # Baked into the main bundle at build time (import.meta.env.MAIN_VITE_*).
+          MAIN_VITE_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          MAIN_VITE_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          MAIN_VITE_GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          MAIN_VITE_GOOGLE_APP_ID: ${{ secrets.GOOGLE_APP_ID }}
         run: pnpm run build:linux
 
       # Import the signing cert ourselves instead of passing CSC_LINK.
@@ -76,10 +79,26 @@ jobs:
         if: matrix.os == 'macos-latest'
         env:
           NODE_OPTIONS: '--max_old_space_size=4096'
+          GH_TOKEN: ${{ github.token }} # electron-builder reads GH_TOKEN
+          # Baked into the main bundle at build time (import.meta.env.MAIN_VITE_*).
+          MAIN_VITE_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          MAIN_VITE_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          MAIN_VITE_GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          MAIN_VITE_GOOGLE_APP_ID: ${{ secrets.GOOGLE_APP_ID }}
+          # Notarization (auto-detected by electron-builder)
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm run build:mac
 
       - name: build-win
         if: matrix.os == 'windows-latest'
         env:
           NODE_OPTIONS: '--max_old_space_size=4096'
+          GH_TOKEN: ${{ github.token }} # electron-builder reads GH_TOKEN
+          # Baked into the main bundle at build time (import.meta.env.MAIN_VITE_*).
+          MAIN_VITE_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          MAIN_VITE_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          MAIN_VITE_GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          MAIN_VITE_GOOGLE_APP_ID: ${{ secrets.GOOGLE_APP_ID }}
         run: pnpm run build:win

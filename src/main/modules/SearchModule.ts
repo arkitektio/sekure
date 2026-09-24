@@ -1,23 +1,35 @@
 import { join } from 'path'
-import { pathToFileURL } from 'url'
-import { app, net } from 'electron'
+import { net } from 'electron'
 import log from 'electron-log'
 import Store from 'electron-store'
 import { AppModule } from './AppModule'
+import { modelsRoot, ortWasmPaths } from './modelPaths'
 import { IpcTransport } from './IpcTransport'
 import { WindowManager } from './WindowManager'
 import { VaultModule } from './VaultModule'
 import { SearchIndex } from '../search/SearchIndex'
-import { WorkerEmbedder } from '../search/WorkerEmbedder'
-import { ensureModel, hasModel, removeModel } from '../search/modelStore'
+import type { Embedder } from '../search/SearchIndex'
+import type { EmbedRequest } from '../search/embedder.worker'
+import { WorkerClient } from '../models/WorkerClient'
+import { ensureModel, hasModel, modelDir, removeModel } from '../models/modelStore'
+import { modelBytes } from '../models/spec'
 import {
   MODEL,
-  MODEL_BYTES,
   SEARCH_STATUS_CHANNEL,
   type SearchHit,
   type SemanticStatus
 } from '../search/protocol'
 import createEmbedderWorker from '../search/embedder.worker?nodeWorker'
+
+/** The embedding worker as an `Embedder`. */
+class EmbedderWorker
+  extends WorkerClient<Omit<EmbedRequest, 'id'>, Float32Array[]>
+  implements Embedder
+{
+  embed(texts: string[], kind: 'query' | 'passage') {
+    return this.call({ texts, kind })
+  }
+}
 
 interface SearchSettings {
   semantic: boolean
@@ -38,8 +50,8 @@ export class SearchModule implements AppModule {
       done < total ? { state: 'indexing', progress: done / total } : { state: 'ready' }
     )
   )
-  private embedder: WorkerEmbedder | undefined
-  private status: SemanticStatus = { state: 'off', downloadBytes: MODEL_BYTES }
+  private embedder: EmbedderWorker | undefined
+  private status: SemanticStatus = { state: 'off', downloadBytes: modelBytes(MODEL) }
   private enabling: Promise<void> | undefined
 
   constructor(
@@ -49,13 +61,7 @@ export class SearchModule implements AppModule {
   ) {}
 
   private get modelDir() {
-    return join(app.getPath('userData'), 'models', MODEL.id, MODEL.revision)
-  }
-
-  /** ORT's WASM runtime, copied next to the main bundle (unpacked from the asar). */
-  private get wasmPaths() {
-    const dir = join(__dirname, 'ort').replace(/app\.asar([\\/])/, 'app.asar.unpacked$1')
-    return pathToFileURL(dir).href + '/'
+    return modelDir(modelsRoot(), MODEL)
   }
 
   async setup() {
@@ -81,7 +87,7 @@ export class SearchModule implements AppModule {
 
     if (this.settings.get('semantic')) {
       this.setStatus(
-        (await hasModel(this.modelDir))
+        (await hasModel(this.modelDir, MODEL))
           ? { state: 'ready' }
           : { state: 'error', message: 'The search model is missing. Enable smart search again.' }
       )
@@ -98,6 +104,7 @@ export class SearchModule implements AppModule {
         this.setStatus({ state: 'downloading', progress: 0 })
         await ensureModel(
           this.modelDir,
+          MODEL,
           (url) => net.fetch(url),
           (progress) => this.setStatus({ state: 'downloading', progress })
         )
@@ -118,15 +125,15 @@ export class SearchModule implements AppModule {
   private async disable(removeFiles: boolean) {
     this.settings.set('semantic', false)
     await this.stopEmbedder()
-    if (removeFiles) await removeModel(join(app.getPath('userData'), 'models'))
+    if (removeFiles) await removeModel(join(modelsRoot(), MODEL.id))
     this.setStatus({ state: 'off' })
   }
 
   private async startEmbedder() {
     if (this.embedder) return
     this.setStatus({ state: 'loading' })
-    const embedder = new WorkerEmbedder(
-      createEmbedderWorker({ workerData: { modelDir: this.modelDir, wasmPaths: this.wasmPaths } })
+    const embedder = new EmbedderWorker(
+      createEmbedderWorker({ workerData: { modelDir: this.modelDir, wasmPaths: ortWasmPaths() } })
     )
     this.embedder = embedder
     try {
@@ -155,7 +162,7 @@ export class SearchModule implements AppModule {
   }
 
   private setStatus(s: Omit<SemanticStatus, 'downloadBytes'>) {
-    this.status = { ...s, downloadBytes: MODEL_BYTES }
+    this.status = { ...s, downloadBytes: modelBytes(MODEL) }
     this.windows.broadcast(SEARCH_STATUS_CHANNEL, this.status)
   }
 }

@@ -1,9 +1,11 @@
 import { join } from 'path'
-import { BrowserWindow, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, nativeTheme, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import { AppModule } from './AppModule'
 import { IpcTransport } from './IpcTransport'
 import { APP_ORIGIN } from '../scheme'
+import { externalUrl } from '../lib/urls'
+import { isAppUrl } from '../lib/appOrigin'
 import icon from '../../../build/icon.png?asset'
 
 /**
@@ -25,21 +27,24 @@ export const secureWebPreferences: Electron.WebPreferences = {
   webSecurity: true,
   // Chromium's built-in PDF viewer, used to preview PDF attachments.
   plugins: true,
-  spellcheck: false
+  spellcheck: false,
+  // The default menu's "Toggle Developer Tools" would otherwise work in a release.
+  devTools: !app.isPackaged
 }
 
 /** A password manager never opens pages inside itself. */
 export function hardenWindow(win: BrowserWindow) {
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url)) void shell.openExternal(url)
+    const safe = externalUrl(url)
+    if (safe && /^https?:\/\//i.test(url)) void shell.openExternal(safe)
     return { action: 'deny' }
   })
-  win.webContents.on('will-navigate', (event, url) => {
-    const allowed = is.dev && process.env['ELECTRON_RENDERER_URL']
-    if (allowed && url.startsWith(allowed)) return
-    if (url.startsWith(APP_ORIGIN)) return
-    event.preventDefault()
-  })
+  const guard = (event: Electron.Event, url: string) => {
+    if (!isAppUrl(url)) event.preventDefault()
+  }
+  win.webContents.on('will-navigate', guard)
+  win.webContents.on('will-redirect', guard)
+  win.webContents.on('will-attach-webview', (event) => event.preventDefault())
 }
 
 /** Load the renderer at a hash route (`/quick` → `#/quick`). */
@@ -70,6 +75,12 @@ export class WindowManager implements AppModule {
     })
     this.ipc.handleChannel('window:close', (e) => BrowserWindow.fromWebContents(e.sender)?.close())
     this.ipc.handleChannel('window:platform', () => process.platform)
+    // Entry URLs: validated here, never window.open from the renderer.
+    this.ipc.handleChannel('shell:openUrl', async (_e, raw: unknown) => {
+      const url = typeof raw === 'string' ? externalUrl(raw) : undefined
+      if (!url) throw new Error('Only http and https links can be opened')
+      await shell.openExternal(url)
+    })
     this.ipc.handleChannel('window:setTheme', (_e, _resolved: string, source: string) => {
       nativeTheme.themeSource = source === 'light' || source === 'dark' ? source : 'system'
     })

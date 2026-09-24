@@ -84,9 +84,14 @@ describe('Unlock', () => {
     await screen.findByText('Unlock with Touch ID next time')
     await userEvent.type(screen.getByPlaceholderText('Master password'), 'hunter2')
     await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
-    await waitFor(() =>
-      expect(api.biometric.enable).toHaveBeenCalledWith('f1', 'hunter2', undefined)
-    )
+    // Main keeps the credentials from this open; the password is sent once.
+    expect(api.vault.open).toHaveBeenCalledWith({
+      fileId: 'f1',
+      password: 'hunter2',
+      keyFile: undefined,
+      enableBiometric: true
+    })
+    await waitFor(() => expect(api.biometric.enable).toHaveBeenCalledWith('f1'))
     expect(await screen.findByText('VAULT OPEN')).toBeInTheDocument()
   })
 })

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { AuthStatus } from '../main/google/protocol'
-import type { DriveFile } from '../main/drive/protocol'
+import type { DriveFile, PickedFile } from '../main/drive/protocol'
 import type { RecentVault, VaultRef } from '../main/sources/protocol'
 import {
   VAULT_EVENT_CHANNEL,
@@ -26,11 +26,18 @@ import {
   type Brand,
   type Preferences
 } from '../main/preferences/protocol'
+import { SEARCH_STATUS_CHANNEL, type SearchHit, type SemanticStatus } from '../main/search/protocol'
 import {
-  SEARCH_STATUS_CHANNEL,
-  type SearchHit,
-  type SemanticStatus
-} from '../main/search/protocol'
+  DEIDENTIFY_STATUS_CHANNEL,
+  DEIDENTIFY_VIEW_CHANNEL,
+  type DeidentifyAction,
+  type DeidentifyDecision,
+  type DeidentifyMode,
+  type DeidentifyResult,
+  type DeidentifySettings,
+  type DeidentifyStatus,
+  type DeidentifyView
+} from '../main/deidentify/protocol'
 
 // This preload runs sandboxed: it may import only `electron`. Anything else
 // (including the channel constant above, which is inlined) must be bundled.
@@ -56,15 +63,23 @@ const api = {
     close: () => invoke('window:close'),
     setTheme: (resolved: string, source: string) => invoke('window:setTheme', resolved, source)
   },
+  shell: {
+    /** Open an http(s) URL in the default browser (main validates it). */
+    openUrl: (url: string): Promise<void> => invoke('shell:openUrl', url)
+  },
   auth: {
     status: (): Promise<AuthStatus> => invoke('auth:status'),
     login: (): Promise<AuthStatus> => invoke('auth:login'),
     cancel: () => invoke('auth:cancel'),
-    logout: (): Promise<AuthStatus> => invoke('auth:logout'),
+    /** `revoked: false` when Google could not confirm revoking the grant. */
+    logout: (): Promise<AuthStatus & { revoked: boolean }> => invoke('auth:logout'),
     onChange: (cb: (s: AuthStatus) => void) => subscribe('auth:changed', cb)
   },
   drive: {
-    list: (search?: string): Promise<DriveFile[]> => invoke('drive:list', search)
+    list: (search?: string): Promise<DriveFile[]> => invoke('drive:list', search),
+    /** Google Picker in the browser; null when the user cancels. */
+    pick: (): Promise<PickedFile | null> => invoke('drive:pick'),
+    cancelPick: () => invoke('drive:cancelPick')
   },
   sources: {
     describe: (id: string): Promise<VaultRef> => invoke('sources:describe', id),
@@ -125,11 +140,33 @@ const api = {
       invoke('search:disableSemantic', removeFiles),
     onStatus: (cb: (s: SemanticStatus) => void) => subscribe(SEARCH_STATUS_CHANNEL, cb)
   },
+  deidentify: {
+    /** The latest view (the popup may load after the first one was sent). */
+    current: (): Promise<DeidentifyView | undefined> => invoke('deidentify:current'),
+    /** Text typed or pasted into the popup when no selection could be read. */
+    submitText: (text: string): Promise<void> => invoke('deidentify:submitText', text),
+    setMode: (mode: DeidentifyMode): Promise<void> => invoke('deidentify:setMode', mode),
+    apply: (decision: DeidentifyDecision, action: DeidentifyAction): Promise<DeidentifyResult> =>
+      invoke('deidentify:apply', decision, action),
+    dismiss: () => invoke('deidentify:dismiss'),
+    keepOpen: (keep: boolean) => invoke('deidentify:keepOpen', keep),
+    suspend: (suspend: boolean) => invoke('deidentify:suspend', suspend),
+    forget: () => invoke('deidentify:forget'),
+    getSettings: (): Promise<DeidentifySettings> => invoke('deidentify:getSettings'),
+    setSettings: (patch: Partial<DeidentifySettings>): Promise<DeidentifyStatus> =>
+      invoke('deidentify:setSettings', patch),
+    status: (): Promise<DeidentifyStatus> => invoke('deidentify:status'),
+    enableModel: (): Promise<void> => invoke('deidentify:enableModel'),
+    disableModel: (removeFiles: boolean): Promise<void> =>
+      invoke('deidentify:disableModel', removeFiles),
+    onView: (cb: (v: DeidentifyView) => void) => subscribe(DEIDENTIFY_VIEW_CHANNEL, cb),
+    onStatus: (cb: (s: DeidentifyStatus) => void) => subscribe(DEIDENTIFY_STATUS_CHANNEL, cb)
+  },
   biometric: {
     available: (): Promise<boolean> => invoke('biometric:available'),
     enabled: (fileId: string): Promise<boolean> => invoke('biometric:enabled', fileId),
-    enable: (fileId: string, password: string, keyFile?: Uint8Array): Promise<void> =>
-      invoke('biometric:enable', fileId, password, keyFile),
+    /** Uses the credentials of the `vault:open` that set `enableBiometric`. */
+    enable: (fileId: string): Promise<void> => invoke('biometric:enable', fileId),
     disable: (fileId: string): Promise<void> => invoke('biometric:disable', fileId),
     unlock: (fileId: string): Promise<VaultSnapshot> => invoke('biometric:unlock', fileId)
   },

@@ -37,11 +37,7 @@ export class BiometricModule implements AppModule {
     this.ipc.handleChannel('biometric:enabled', (_e, fileId: string) =>
       this.secrets.has(keyFor(fileId))
     )
-    this.ipc.handleChannel(
-      'biometric:enable',
-      (_e, fileId: string, password: string, keyFile?: Uint8Array) =>
-        this.enable(fileId, password, keyFile)
-    )
+    this.ipc.handleChannel('biometric:enable', (_e, fileId: string) => this.enable(fileId))
     this.ipc.handleChannel('biometric:disable', (_e, fileId: string) => {
       this.secrets.delete(keyFor(fileId))
     })
@@ -56,15 +52,16 @@ export class BiometricModule implements AppModule {
     )
   }
 
-  private async enable(fileId: string, password: string, keyFile?: Uint8Array): Promise<void> {
+  private async enable(fileId: string): Promise<void> {
     if (!this.available()) throw new Error('Touch ID is not available on this Mac')
-    // Only accept credentials that just opened this very file.
-    if (this.vault.openFileId !== fileId)
-      throw new Error('Unlock the vault with its password first')
+    // Only credentials that just opened this very file, held by main since
+    // that `vault:open`: the renderer never sends the password again.
+    const credentials = this.vault.takeBiometricCredentials(fileId)
+    if (!credentials) throw new Error('Unlock the vault with its password first')
     await systemPreferences.promptTouchID('enable Touch ID unlock for this vault')
     const stored: StoredUnlock = {
-      password,
-      keyFile: keyFile ? Buffer.from(keyFile).toString('base64') : undefined
+      password: credentials.password,
+      keyFile: credentials.keyFile ? Buffer.from(credentials.keyFile).toString('base64') : undefined
     }
     this.secrets.set(keyFor(fileId), JSON.stringify(stored))
   }

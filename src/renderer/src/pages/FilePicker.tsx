@@ -88,6 +88,22 @@ export function FilePicker() {
 
   const open = (id: string) => navigate(unlockPath(id))
 
+  // Sekure only sees Drive files it created or that were chosen in the Google
+  // Picker (drive.file); picking a file is what grants access to it.
+  const [picking, setPicking] = useState(false)
+  const pickFromDrive = async () => {
+    setPicking(true)
+    try {
+      const picked = await api.drive.pick()
+      if (picked) open(picked.id)
+    } catch (e) {
+      const msg = displayError(e)
+      if (!msg.includes('cancelled')) toast.error(msg)
+    } finally {
+      setPicking(false)
+    }
+  }
+
   return (
     <div className="mx-auto flex h-full max-w-2xl flex-col px-6 pt-8">
       <div className="flex items-end justify-between gap-4">
@@ -160,6 +176,12 @@ export function FilePicker() {
 
       {!connected ? (
         <div className="rounded-xl border border-dashed p-6 text-center">
+          {status?.scopeChanged && (
+            <p className="mb-3 text-sm">
+              Sekure now asks only for access to the vaults you choose. Reconnect Google Drive, then
+              pick your vault once with “Choose from Google Drive”.
+            </p>
+          )}
           <p className="text-sm text-muted-foreground">
             Connect Google Drive to browse and sync vaults directly — or, if you use{' '}
             <span className="font-medium text-foreground">Google Drive for desktop</span>, just open
@@ -181,14 +203,25 @@ export function FilePicker() {
         </div>
       ) : (
         <>
-          <div className="relative">
-            <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="pl-9"
-              placeholder="Filter Drive vaults…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Filter Drive vaults…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+            {picking ? (
+              <Button variant="outline" onClick={() => void api.drive.cancelPick()}>
+                <Loader2 className="animate-spin" /> Cancel
+              </Button>
+            ) : (
+              <Button variant="outline" onClick={() => void pickFromDrive()}>
+                <Cloud /> Choose from Google Drive…
+              </Button>
+            )}
           </div>
 
           <ScrollArea className="mt-3 min-h-0 flex-1 pb-6">
@@ -212,9 +245,10 @@ export function FilePicker() {
                   <EmptyMedia variant="icon">
                     <FileLock2 />
                   </EmptyMedia>
-                  <EmptyTitle>No .kdbx files found</EmptyTitle>
+                  <EmptyTitle>No vaults yet</EmptyTitle>
                   <EmptyDescription>
-                    Upload a KeePass database (e.g. from KeePassXC) to Google Drive and refresh.
+                    Sekure only sees the vaults you give it. Use “Choose from Google Drive” to pick
+                    a KeePass database (e.g. one from KeePassXC).
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>

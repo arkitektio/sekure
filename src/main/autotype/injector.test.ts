@@ -38,6 +38,35 @@ describe('macOS', () => {
   })
 })
 
+describe('copy (deidentify)', () => {
+  it('presses the copy chord on every platform', async () => {
+    const mac = fakeExec()
+    await createInjector('darwin', {}, mac).copy({ id: 'com.apple.TextEdit' })
+    expect(mac.mock.calls[0][1].at(-1)).toBe(
+      'tell application "System Events" to keystroke "c" using command down'
+    )
+
+    const win = fakeExec()
+    await createInjector('win32', {}, win).copy({})
+    expect(win.mock.calls[0][1].at(-1)).toContain("SendWait('^c')")
+
+    const x11 = fakeExec()
+    await createInjector('linux', { DISPLAY: ':0' }, x11).copy({ id: '42' })
+    expect(x11).toHaveBeenLastCalledWith('xdotool', [
+      'windowactivate',
+      '--sync',
+      '42',
+      'key',
+      '--clearmodifiers',
+      'ctrl+c'
+    ])
+
+    const wayland = fakeExec()
+    await createInjector('linux', { XDG_SESSION_TYPE: 'wayland' }, wayland).copy({})
+    expect(wayland).toHaveBeenCalledWith('wtype', ['-M', 'ctrl', 'c', '-m', 'ctrl'])
+  })
+})
+
 describe('Windows', () => {
   it('sends Ctrl+V through SendKeys', async () => {
     const exec = fakeExec()

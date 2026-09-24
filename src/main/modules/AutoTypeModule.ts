@@ -1,21 +1,29 @@
-import { execFile } from 'child_process'
 import {
   app,
   BrowserWindow,
   clipboard,
   globalShortcut,
-  nativeTheme,
   Notification,
-  screen,
   systemPreferences
 } from 'electron'
 import log from 'electron-log'
 import Store from 'electron-store'
 import { AppModule } from './AppModule'
 import { IpcTransport } from './IpcTransport'
-import { hardenWindow, loadRoute, secureWebPreferences, WindowManager } from './WindowManager'
+import { WindowManager } from './WindowManager'
+import {
+  createFloatingPopup,
+  delay,
+  exec,
+  FOCUS_SETTLE_MS,
+  isWayland,
+  positionPopup,
+  restoreClipboard,
+  RESTORE_CLIPBOARD_MS,
+  saveClipboard
+} from './popup'
 import { VaultModule } from './VaultModule'
-import { createInjector, type Exec, type Injector, type Target } from '../autotype/injector'
+import { createInjector, type Injector, type Target } from '../autotype/injector'
 import {
   AUTOTYPE_OPENED_CHANNEL,
   DEFAULT_AUTOTYPE_SETTINGS,
@@ -26,46 +34,7 @@ import {
   type FillResult
 } from '../autotype/protocol'
 
-const POPUP_WIDTH = 560
-const POPUP_HEIGHT = 420
-/** How long the pasted value stays on the clipboard before the old content is back. */
-const RESTORE_CLIPBOARD_MS = 400
-/** Let the popup hide and focus settle before the keystroke. */
-const FOCUS_SETTLE_MS = 80
-
-const exec: Exec = (file, args) =>
-  new Promise((resolve, reject) =>
-    execFile(file, args, { timeout: 5000, windowsHide: true }, (err, stdout) =>
-      err ? reject(err) : resolve(String(stdout))
-    )
-  )
-
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
-type SavedClipboard = Parameters<typeof clipboard.write>[0]
-
-function saveClipboard(): SavedClipboard {
-  const saved: SavedClipboard = {}
-  const text = clipboard.readText()
-  const html = clipboard.readHTML()
-  const rtf = clipboard.readRTF()
-  const image = clipboard.readImage()
-  if (text) saved.text = text
-  if (html) saved.html = html
-  if (rtf) saved.rtf = rtf
-  if (!image.isEmpty()) saved.image = image
-  return saved
-}
-
-function restoreClipboard(saved: SavedClipboard) {
-  if (Object.keys(saved).length) clipboard.write(saved)
-  else clipboard.clear()
-}
-
-const isWayland = () =>
-  process.platform === 'linux' &&
-  (process.env.XDG_SESSION_TYPE === 'wayland' ||
-    (!!process.env.WAYLAND_DISPLAY && !process.env.DISPLAY))
+const POPUP_SIZE = { width: 560, height: 420 }
 
 /**
  * Global auto-type: a system-wide shortcut opens a search popup over whatever
@@ -213,31 +182,8 @@ export class AutoTypeModule implements AppModule {
 
   private ensurePopup(): BrowserWindow {
     if (this.popup && !this.popup.isDestroyed()) return this.popup
-    const win = new BrowserWindow({
-      width: POPUP_WIDTH,
-      height: POPUP_HEIGHT,
-      show: false,
-      frame: false,
-      resizable: false,
-      minimizable: false,
-      maximizable: false,
-      fullscreenable: false,
-      skipTaskbar: true,
-      alwaysOnTop: true,
-      // An NSPanel floats over full-screen apps without switching Spaces.
-      ...(process.platform === 'darwin' ? { type: 'panel' } : {}),
-      backgroundColor: nativeTheme.shouldUseDarkColors ? '#0a0a0a' : '#ffffff',
-      webPreferences: secureWebPreferences
-    })
-    win.setAlwaysOnTop(true, 'floating')
-    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-    win.on('blur', () => {
-      if (!this.keepOpen) win.hide()
-    })
-    hardenWindow(win)
-    loadRoute(win, '/quick')
-    this.popup = win
-    return win
+    this.popup = createFloatingPopup('/quick', POPUP_SIZE, () => this.keepOpen)
+    return this.popup
   }
 
   private async trigger() {
@@ -252,15 +198,10 @@ export class AutoTypeModule implements AppModule {
       this.target = {}
     }
 
-    log.info('Auto-type target', this.target.name ?? '(unknown)')
+    // Not the name: on X11 it is the window title, which can be private.
+    log.info(`Auto-type target ${this.target.name ? 'found' : 'unknown'}`)
     const popup = this.ensurePopup()
-    const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-    popup.setBounds({
-      x: Math.round(workArea.x + (workArea.width - POPUP_WIDTH) / 2),
-      y: Math.round(workArea.y + workArea.height * 0.2),
-      width: POPUP_WIDTH,
-      height: POPUP_HEIGHT
-    })
+    positionPopup(popup, POPUP_SIZE)
 
     // A popup still loading pulls this via `autotype:current` instead.
     if (!popup.webContents.isLoading()) {
@@ -294,6 +235,9 @@ export class AutoTypeModule implements AppModule {
     }
 
     const saved = saveClipboard()
+    // A secret Sekure copied earlier is never put back: its 30 s clear may
+    // fire during the paste, and a restored copy would then stay forever.
+    const savedIsSecret = this.vault.ownsClipboard()
     clipboard.writeText(value)
     try {
       await delay(FOCUS_SETTLE_MS)
@@ -304,7 +248,9 @@ export class AutoTypeModule implements AppModule {
       return this.fallback(value)
     }
     setTimeout(() => {
-      if (clipboard.readText() === value) restoreClipboard(saved)
+      if (clipboard.readText() !== value) return
+      if (savedIsSecret) clipboard.clear()
+      else restoreClipboard(saved)
     }, RESTORE_CLIPBOARD_MS)
     return { pasted: true }
   }

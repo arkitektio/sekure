@@ -2,6 +2,7 @@ import * as kdbxweb from 'kdbxweb'
 import { installArgon2 } from './argon2'
 import { kindForMime, mimeForName } from './mime'
 import { hostLabel, NOTES_LIMIT, type SearchDocument } from '../search/document'
+import { findSecretSpans, type KnownSecret, type SecretHit } from '../deidentify/secretMatch'
 import {
   detectType,
   formatMarker,
@@ -17,6 +18,7 @@ import {
 import {
   MAX_ATTACHMENT_BYTES,
   STANDARD_FIELDS,
+  type StandardField,
   type VaultAttachment,
   type EntryInput,
   type VaultCustomField,
@@ -51,10 +53,62 @@ export function makeCredentials(password: string, keyFile?: Uint8Array): kdbxweb
   )
 }
 
+/**
+ * Ceilings for the key-derivation parameters of a file we did not write. The
+ * KDF runs before the header HMAC is checked, on the main thread, so without
+ * them a crafted header (M = 4 GiB, I = 2^32) freezes the app for any
+ * password — including during the merge in `save()`, with the vault open.
+ * KeePassXC's own maximums are well below these.
+ */
+export const KDF_LIMITS = {
+  argon2MemoryBytes: 1024 * 1024 * 1024,
+  argon2Iterations: 100,
+  argon2Parallelism: 64,
+  aesRounds: 100_000_000
+}
+
+const kdfNumber = (v: unknown): number =>
+  typeof v === 'number' ? v : v instanceof kdbxweb.Int64 ? v.value : NaN
+
+/** Throws `VaultError('Corrupt')` if the header asks for a KDF beyond `KDF_LIMITS`. */
+export function checkKdfParameters(bytes: ArrayBuffer): void {
+  let header: kdbxweb.KdbxHeader
+  try {
+    const ctx = new kdbxweb.KdbxContext({
+      kdbx: kdbxweb.Kdbx.create(new kdbxweb.Credentials(null), '')
+    })
+    header = kdbxweb.KdbxHeader.read(new kdbxweb.BinaryStream(bytes), ctx)
+  } catch {
+    return // not a readable header: let Kdbx.load report it
+  }
+  const tooExpensive = () => new VaultError('Corrupt', 'Unsupported key derivation parameters')
+  const params = header.kdfParameters
+  if (!params) {
+    // KDBX 3: AES-KDF with rounds in the header.
+    const rounds = header.keyEncryptionRounds ?? 0
+    if (!(rounds <= KDF_LIMITS.aesRounds)) throw tooExpensive()
+    return
+  }
+  const uuid = params.get('$UUID')
+  const id = uuid instanceof ArrayBuffer ? kdbxweb.ByteUtils.bytesToBase64(uuid) : ''
+  if (id === kdbxweb.Consts.KdfId.Aes) {
+    if (!(kdfNumber(params.get('R')) <= KDF_LIMITS.aesRounds)) throw tooExpensive()
+  } else if (id === kdbxweb.Consts.KdfId.Argon2d || id === kdbxweb.Consts.KdfId.Argon2id) {
+    if (
+      !(kdfNumber(params.get('M')) <= KDF_LIMITS.argon2MemoryBytes) ||
+      !(kdfNumber(params.get('I')) <= KDF_LIMITS.argon2Iterations) ||
+      !(kdfNumber(params.get('P')) <= KDF_LIMITS.argon2Parallelism)
+    ) {
+      throw tooExpensive()
+    }
+  }
+}
+
 export async function loadKdbx(
   bytes: ArrayBuffer,
   credentials: kdbxweb.KdbxCredentials
 ): Promise<kdbxweb.Kdbx> {
+  checkKdfParameters(bytes)
   try {
     return await kdbxweb.Kdbx.load(bytes, credentials)
   } catch (e) {
@@ -73,6 +127,19 @@ const fieldText = (v: kdbxweb.KdbxEntryField | undefined): string => {
   return v instanceof kdbxweb.ProtectedValue ? v.getText() : v
 }
 
+/** Plaintext of an unprotected field; '' for a protected one (reveal on demand). */
+const plainText = (v: kdbxweb.KdbxEntryField | undefined): string =>
+  typeof v === 'string' ? v : ''
+
+/** Length without decrypting: a snapshot must not leave plaintext garbage in the heap. */
+const fieldLength = (v: kdbxweb.KdbxEntryField | undefined): number =>
+  v === undefined ? 0 : v instanceof kdbxweb.ProtectedValue ? v.byteLength : v.length
+
+const binarySize = (b: kdbxweb.KdbxBinary | kdbxweb.KdbxBinaryWithHash): number => {
+  const value = kdbxweb.KdbxBinaries.isKdbxBinaryWithHash(b) ? b.value : b
+  return value.byteLength
+}
+
 /** Unwrap whatever shape kdbxweb holds a binary in to raw bytes. */
 const binaryBytes = (b: kdbxweb.KdbxBinary | kdbxweb.KdbxBinaryWithHash): Uint8Array => {
   const value = kdbxweb.KdbxBinaries.isKdbxBinaryWithHash(b) ? b.value : b
@@ -88,6 +155,8 @@ const iso = (d: Date | undefined) => (d ? d.toISOString() : undefined)
  */
 export class VaultSession {
   dirty = false
+  /** Bumped on every change; `markSaved` only clears `dirty` if nothing changed since. */
+  revision = 0
   /** Meta/CustomData keys changed since the last save (see `merge`). */
   private editedCustomData = new Set<string>()
 
@@ -135,11 +204,11 @@ export class VaultSession {
     const attachments: VaultAttachment[] = []
     for (const [name, b] of entry.binaries) {
       const mime = mimeForName(name)
-      attachments.push({ name, size: binaryBytes(b).byteLength, mime, kind: kindForMime(mime) })
+      attachments.push({ name, size: binarySize(b), mime, kind: kindForMime(mime) })
     }
     return {
       ...this.summarize(entry),
-      notes: fieldText(entry.fields.get('Notes')),
+      notes: plainText(entry.fields.get('Notes')),
       attachments,
       created: iso(entry.times.creationTime),
       expires: entry.times.expires ? iso(entry.times.expiryTime) : undefined,
@@ -153,6 +222,34 @@ export class VaultSession {
    * What search indexes: titles, types, groups, tags, hosts, usernames, the names
    * of custom fields and the start of the notes. Protected values are never read.
    */
+  /**
+   * Where the vault's secrets occur in `text`: passwords, every protected field,
+   * OTP seeds and the fields entry types declare protected. The deidentifier's
+   * hard check. Returns entry titles and field names, never values.
+   */
+  findSecrets(text: string): SecretHit[] {
+    const secrets: KnownSecret[] = []
+    for (const entry of this.db.getDefaultGroup().allEntries()) {
+      const title = fieldText(entry.fields.get('Title')) || '(untitled)'
+      const type = this.resolveType(entry).type
+      for (const [key, raw] of entry.fields) {
+        const declared = type.fields.find((f) => f.key === key)?.protected
+        const isOtp = OTP_FIELDS.includes(key)
+        if (!(raw instanceof kdbxweb.ProtectedValue) && key !== 'Password' && !declared && !isOtp) {
+          continue
+        }
+        const value = fieldText(raw)
+        if (!value) continue
+        const field = isOtp ? 'one-time code seed' : key
+        secrets.push({ value, entry: title, field, ignoreCase: isOtp })
+        // An otpauth:// URI carries the actual seed in `secret=`.
+        const seed = /[?&]secret=([A-Z2-7=]+)/i.exec(value)?.[1]
+        if (seed) secrets.push({ value: seed, entry: title, field, ignoreCase: true })
+      }
+    }
+    return findSecretSpans(text, secrets)
+  }
+
   searchDocuments(): SearchDocument[] {
     const plain = (entry: kdbxweb.KdbxEntry, key: string) => {
       const v = entry.fields.get(key)
@@ -350,10 +447,15 @@ export class VaultSession {
         }
       }
     }
-    this.dirty = true
+    this.touch()
   }
 
-  markSaved(): void {
+  /**
+   * The bytes written were produced at `savedRevision`. Edits made while the
+   * write was in flight are not in them, so the vault stays dirty.
+   */
+  markSaved(savedRevision = this.revision): void {
+    if (savedRevision !== this.revision) return
     this.dirty = false
     this.editedCustomData.clear()
     this.db.removeLocalEditState()
@@ -363,6 +465,7 @@ export class VaultSession {
 
   private touch() {
     this.dirty = true
+    this.revision++
   }
 
   private applyInput(entry: kdbxweb.KdbxEntry, input: EntryInput, isNew = false) {
@@ -373,13 +476,26 @@ export class VaultSession {
       if (!requested) throw new VaultError('Unknown', `Unknown entry type ${input.type}`)
       type = requested
     }
-    entry.fields.set('Title', input.title)
-    entry.fields.set('UserName', input.username)
-    if (input.password !== undefined) {
-      entry.fields.set('Password', kdbxweb.ProtectedValue.fromString(input.password))
+    // A standard field the user (or KeePass memory protection) made protected
+    // stays protected; `undefined` keeps its current value, like Password.
+    const memory = this.db.meta.memoryProtection
+    const setStandard = (
+      key: StandardField,
+      value: string | undefined,
+      protectByDefault = false
+    ) => {
+      if (value === undefined) return
+      const wasProtected = entry.fields.get(key) instanceof kdbxweb.ProtectedValue
+      entry.fields.set(
+        key,
+        wasProtected || protectByDefault ? kdbxweb.ProtectedValue.fromString(value) : value
+      )
     }
-    entry.fields.set('URL', input.url)
-    entry.fields.set('Notes', input.notes)
+    setStandard('Title', input.title, memory.title)
+    setStandard('UserName', input.username, memory.userName)
+    setStandard('Password', input.password, true)
+    setStandard('URL', input.url, memory.url)
+    setStandard('Notes', input.notes, memory.notes)
     entry.tags = input.tags
 
     if (input.customFields) {
@@ -449,14 +565,17 @@ export class VaultSession {
     return {
       uuid: entry.uuid.id,
       groupUuid: entry.parentGroup?.uuid.id ?? '',
-      title: fieldText(entry.fields.get('Title')),
-      username: fieldText(entry.fields.get('UserName')),
-      url: fieldText(entry.fields.get('URL')),
+      title: plainText(entry.fields.get('Title')),
+      username: plainText(entry.fields.get('UserName')),
+      url: plainText(entry.fields.get('URL')),
+      protectedFields: STANDARD_FIELDS.filter(
+        (k) => k !== 'Password' && entry.fields.get(k) instanceof kdbxweb.ProtectedValue
+      ),
       tags: entry.tags,
       icon: entry.icon,
       type: type.id,
       subtitle: subtitleFor(type, plain),
-      hasPassword: fieldText(entry.fields.get('Password')).length > 0,
+      hasPassword: fieldLength(entry.fields.get('Password')) > 0,
       hasOtp: OTP_FIELDS.some((k) => entry.fields.has(k)),
       attachmentCount: entry.binaries.size,
       inRecycleBin: this.isInRecycleBin(entry.parentGroup),

@@ -7,3 +7,9 @@ export interface DriveFile {
   /** Display path hint, e.g. the parent folder name. */
   owner?: string
 }
+
+/** A file the user chose in the Google Picker (Sekure now has drive.file access to it). */
+export interface PickedFile {
+  id: string
+  name: string
+}

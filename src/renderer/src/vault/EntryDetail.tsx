@@ -17,13 +17,22 @@ import {
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
 import { useVault } from '@/stores/vault'
-import { api, displayError, formatDate } from '@/lib/api'
+import { api, displayError, entryTitle, formatDate } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { renderSummaryIcon } from './icons'
 import { countryName, expiryStatus, flag, formatDay, type ExpiryStatus } from './typedValues'
 import { getType, loginType, type EntryType, type TypeField } from '../../../main/vault/entryTypes'
 import { Attachments, attachFiles } from './Attachments'
 import type { TotpCode, VaultEntryDetail } from '../../../main/vault/protocol'
+
+/** Entry URLs open in the default browser; main validates the scheme. */
+const openUrl = async (url: string) => {
+  try {
+    await api.shell.openUrl(url)
+  } catch (e) {
+    toast.error(displayError(e))
+  }
+}
 
 const copyField = async (uuid: string, field: string, label: string) => {
   try {
@@ -69,9 +78,36 @@ function FieldRow({
   )
 }
 
-/** A protected value: masked until revealed, fetched from main on demand. */
-function SecretRow({ uuid, field, label }: { uuid: string; field: string; label: string }) {
+/** How long a revealed value stays on screen. */
+const REVEAL_MS = 30_000
+
+/**
+ * A protected value: masked until revealed, fetched from main on demand, and
+ * masked again after 30 s or when the window loses focus.
+ */
+function SecretRow({
+  uuid,
+  field,
+  label,
+  multiline
+}: {
+  uuid: string
+  field: string
+  label: string
+  multiline?: boolean
+}) {
   const [value, setValue] = useState<string>()
+
+  useEffect(() => {
+    if (value === undefined) return
+    const hide = () => setValue(undefined)
+    const t = setTimeout(hide, REVEAL_MS)
+    window.addEventListener('blur', hide)
+    return () => {
+      clearTimeout(t)
+      window.removeEventListener('blur', hide)
+    }
+  }, [value])
 
   const toggle = async () => {
     if (value !== undefined) return setValue(undefined)
@@ -94,7 +130,9 @@ function SecretRow({ uuid, field, label }: { uuid: string; field: string; label:
         </>
       }
     >
-      <span className="font-mono break-all">{value ?? '••••••••••••'}</span>
+      <span className={cn('font-mono break-all', multiline && 'text-xs whitespace-pre-wrap')}>
+        {value ?? '••••••••••••'}
+      </span>
     </FieldRow>
   )
 }
@@ -230,7 +268,7 @@ export function EntryDetail({ uuid }: { uuid: string }) {
             </div>
             <div className="min-w-0 flex-1">
               <h2 className="truncate text-xl font-semibold tracking-tight" data-selectable>
-                {entry.title || '(untitled)'}
+                {entryTitle(entry)}
               </h2>
               {type.id !== 'login' && (
                 <div className="text-xs text-muted-foreground">{type.label}</div>
@@ -258,10 +296,11 @@ export function EntryDetail({ uuid }: { uuid: string }) {
             </Button>
           </div>
 
+          {/* Keyed by modification time: a merge or edit re-masks revealed values. */}
           {type.id === 'login' ? (
-            <LoginRows entry={entry} />
+            <LoginRows key={entry.modified} entry={entry} />
           ) : (
-            <TypedView entry={entry} type={type} />
+            <TypedView key={entry.modified} entry={entry} type={type} />
           )}
 
           {entry.typeDetected && (
@@ -271,6 +310,16 @@ export function EntryDetail({ uuid }: { uuid: string }) {
             </p>
           )}
 
+          {entry.protectedFields.includes('Notes') && (
+            <div className="mt-6 rounded-xl border bg-card px-4">
+              <SecretRow
+                uuid={uuid}
+                field="Notes"
+                label={type.id === 'secureNote' ? 'Note' : 'Notes'}
+                multiline
+              />
+            </div>
+          )}
           {entry.notes && (
             <section className="mt-6">
               <h3 className="mb-2 text-xs font-medium text-muted-foreground uppercase">
@@ -315,14 +364,14 @@ export function EntryDetail({ uuid }: { uuid: string }) {
       >
         <div className="flex flex-col items-center gap-2 text-primary">
           <Upload className="size-8" />
-          <span className="font-medium">Drop to attach to “{entry.title}”</span>
+          <span className="font-medium">Drop to attach to “{entryTitle(entry)}”</span>
         </div>
       </div>
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete “{entry.title}”?</AlertDialogTitle>
+            <AlertDialogTitle>Delete “{entryTitle(entry)}”?</AlertDialogTitle>
             <AlertDialogDescription>
               The entry moves to the recycle bin. The change reaches Google Drive when you save.
             </AlertDialogDescription>
@@ -371,23 +420,29 @@ function CustomFieldRows({ entry, skip }: { entry: VaultEntryDetail; skip: Set<s
 }
 
 function LoginRows({ entry }: { entry: VaultEntryDetail }) {
+  const isProtected = (k: string) => entry.protectedFields.includes(k as 'UserName')
   return (
     <div className="mt-6 divide-y rounded-xl border bg-card px-4">
-      <FieldRow
-        label="Username"
-        actions={
-          entry.username && (
-            <CopyButton
-              label="Username"
-              onClick={() => void copyField(entry.uuid, 'UserName', 'Username')}
-            />
-          )
-        }
-      >
-        {entry.username || <span className="text-muted-foreground">—</span>}
-      </FieldRow>
+      {isProtected('UserName') ? (
+        <SecretRow uuid={entry.uuid} field="UserName" label="Username" />
+      ) : (
+        <FieldRow
+          label="Username"
+          actions={
+            entry.username && (
+              <CopyButton
+                label="Username"
+                onClick={() => void copyField(entry.uuid, 'UserName', 'Username')}
+              />
+            )
+          }
+        >
+          {entry.username || <span className="text-muted-foreground">—</span>}
+        </FieldRow>
+      )}
       {entry.hasPassword && <SecretRow uuid={entry.uuid} field="Password" label="Password" />}
       {entry.hasOtp && <OtpRow uuid={entry.uuid} />}
+      {isProtected('URL') && <SecretRow uuid={entry.uuid} field="URL" label="Website" />}
       {entry.url && (
         <FieldRow
           label="Website"
@@ -396,7 +451,7 @@ function LoginRows({ entry }: { entry: VaultEntryDetail }) {
               <Button
                 variant="ghost"
                 size="icon-xs"
-                onClick={() => window.open(entry.url, '_blank')}
+                onClick={() => void openUrl(entry.url)}
                 aria-label="Open website"
               >
                 <ExternalLink />
@@ -415,6 +470,7 @@ function LoginRows({ entry }: { entry: VaultEntryDetail }) {
 
 /** The value of a type field as far as the renderer can see it (protected → undefined). */
 function plainValue(entry: VaultEntryDetail, f: TypeField): string | undefined {
+  if (f.standard && entry.protectedFields.includes(f.standard as 'UserName')) return undefined
   if (f.standard === 'UserName') return entry.username
   if (f.standard === 'URL') return entry.url
   const custom = entry.customFields.find((c) => c.key === f.key)
@@ -423,6 +479,7 @@ function plainValue(entry: VaultEntryDetail, f: TypeField): string | undefined {
 
 function hasValue(entry: VaultEntryDetail, f: TypeField): boolean {
   if (f.standard === 'Password') return entry.hasPassword
+  if (f.standard && entry.protectedFields.includes(f.standard as 'UserName')) return true
   const custom = entry.customFields.find((c) => c.key === f.key)
   if (custom?.protected) return true
   return !!plainValue(entry, f)
@@ -496,7 +553,7 @@ function TypedView({ entry, type }: { entry: VaultEntryDetail; type: EntryType }
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      onClick={() => window.open(v, '_blank')}
+                      onClick={() => void openUrl(v)}
                       aria-label="Open website"
                     >
                       <ExternalLink />

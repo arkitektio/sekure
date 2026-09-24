@@ -9,8 +9,18 @@ import Store from 'electron-store'
 export class SecretStore {
   private store = new Store<Record<string, string>>({ name: 'secrets' })
 
+  /**
+   * On Linux without a keyring, Electron falls back to `basic_text`: a
+   * hard-coded key, i.e. plaintext with extra steps. Treat that as unavailable
+   * rather than storing a Drive token or master password that way.
+   */
   available(): boolean {
-    return safeStorage.isEncryptionAvailable()
+    if (!safeStorage.isEncryptionAvailable()) return false
+    if (process.platform === 'linux') {
+      const backend = safeStorage.getSelectedStorageBackend()
+      if (backend === 'basic_text' || backend === 'unknown') return false
+    }
+    return true
   }
 
   set(key: string, value: string): void {
@@ -30,8 +40,9 @@ export class SecretStore {
     }
   }
 
+  /** A value that can actually be decrypted (not just a stale ciphertext). */
   has(key: string): boolean {
-    return this.store.has(key)
+    return this.get(key) !== undefined
   }
 
   delete(key: string): void {

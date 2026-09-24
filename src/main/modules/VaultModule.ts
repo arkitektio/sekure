@@ -1,16 +1,19 @@
-import { readFile, stat, writeFile } from 'fs/promises'
-import { basename } from 'path'
-import { BrowserWindow, clipboard, dialog, powerMonitor } from 'electron'
+import { createHash } from 'crypto'
+import { mkdir, readFile, stat, writeFile } from 'fs/promises'
+import { basename, join } from 'path'
+import { app, BrowserWindow, clipboard, dialog, powerMonitor } from 'electron'
 import log from 'electron-log'
 import Store from 'electron-store'
 import { AppModule } from './AppModule'
 import { IpcTransport } from './IpcTransport'
 import { WindowManager } from './WindowManager'
 import { SourcesModule } from './SourcesModule'
-import type { VaultSource } from '../sources/VaultSource'
+import { RevisionConflict, type VaultSource } from '../sources/VaultSource'
 import { loadKdbx, makeCredentials, VaultError, VaultSession } from '../vault/VaultSession'
-import { generatePassword, DEFAULT_PASSWORD_OPTIONS } from '../vault/generator'
+import { generatePassword } from '../vault/generator'
 import { parseOtp, totp } from '../vault/totp'
+import { exportDefaultPath } from '../vault/exportPath'
+import { applySettingsPatch, DEFAULT_VAULT_SETTINGS, type VaultSettings } from '../vault/settings'
 import {
   MAX_ATTACHMENT_BYTES,
   VAULT_EVENT_CHANNEL,
@@ -25,16 +28,20 @@ import {
 import { OTP_FIELD } from '../autotype/protocol'
 
 const CLIPBOARD_CLEAR_MS = 30_000
+/** Failed auto-saves before an idle lock gives up and locks anyway (with a recovery copy). */
+const MAX_IDLE_SAVE_ATTEMPTS = 3
+/** Revision moved again between merge and write: merge again, at most this often. */
+const MAX_SAVE_ROUNDS = 3
 
-interface Settings {
-  autoLockMinutes: number
-  lockOnSleep: boolean
-}
-
-/** Errors crossing IPC lose their class; encode the code into the message. */
+/**
+ * Errors crossing IPC lose their class; encode the code into the message.
+ * Only the message crosses: Electron logs a handler's error with all its
+ * properties, and some carry the input they failed on (Node's ERR_INVALID_URL
+ * keeps an otpauth URI, seed included, on `.input`).
+ */
 const ipcError = (e: unknown): never => {
   if (e instanceof VaultError) throw new Error(`${e.code}: ${e.message}`)
-  throw e
+  throw new Error(e instanceof Error ? e.message : 'The operation failed')
 }
 
 export class VaultModule implements AppModule {
@@ -46,9 +53,17 @@ export class VaultModule implements AppModule {
   private idleTimer: NodeJS.Timeout | undefined
   private clipboardTimer: NodeJS.Timeout | undefined
   private clipboardValue: string | undefined
-  private settings = new Store<Settings>({
+  /** In-flight save; saves are serialized (manual save vs. auto-lock). */
+  private saving: Promise<SaveResult> | undefined
+  private idleSaveFailures = 0
+  /**
+   * Credentials of the last open, held only when the renderer asked to enable
+   * Touch ID with it, so it never has to send the password a second time.
+   */
+  private pendingBiometric: { fileId: string; password: string; keyFile?: Uint8Array } | undefined
+  private settings = new Store<VaultSettings>({
     name: 'settings',
-    defaults: { autoLockMinutes: 10, lockOnSleep: true }
+    defaults: DEFAULT_VAULT_SETTINGS
   })
 
   constructor(
@@ -61,9 +76,21 @@ export class VaultModule implements AppModule {
     const h = this.ipc.handleChannel.bind(this.ipc)
 
     h('vault:state', () => this.state())
-    h('vault:open', (_e, req: OpenRequest) =>
-      this.open(req.fileId, req.password, req.keyFile).catch(ipcError)
-    )
+    h('vault:open', async (_e, req: OpenRequest) => {
+      try {
+        const snapshot = await this.open(req.fileId, req.password, req.keyFile)
+        if (req.enableBiometric) {
+          this.pendingBiometric = {
+            fileId: req.fileId,
+            password: req.password,
+            keyFile: req.keyFile
+          }
+        }
+        return snapshot
+      } catch (e) {
+        return ipcError(e)
+      }
+    })
     h('vault:snapshot', () => this.requireSession().snapshot())
     h('vault:entry', (_e, uuid: string) =>
       this.withActivity(() => this.requireSession().entryDetail(uuid))
@@ -131,13 +158,11 @@ export class VaultModule implements AppModule {
 
     h('vault:save', () => this.save().catch(ipcError))
     h('vault:lock', () => this.lock('manual'))
-    h('vault:generatePassword', (_e, opts?: PasswordOptions) =>
-      generatePassword(opts ?? DEFAULT_PASSWORD_OPTIONS)
-    )
+    h('vault:generatePassword', (_e, opts?: Partial<PasswordOptions>) => generatePassword(opts))
     h('vault:activity', () => this.resetIdle())
     h('vault:getSettings', () => this.settings.store)
-    h('vault:setSettings', (_e, patch: Partial<Settings>) => {
-      this.settings.set({ ...this.settings.store, ...patch })
+    h('vault:setSettings', (_e, patch: unknown) => {
+      this.settings.set(applySettingsPatch(this.settings.store, patch))
       this.resetIdle()
       return this.settings.store
     })
@@ -201,6 +226,12 @@ export class VaultModule implements AppModule {
     this.eventListeners.push(cb)
   }
 
+  /** Where the open vault's secrets occur in `text` (names and positions only). */
+  findSecrets(text: string) {
+    if (!this.session) throw new VaultError('Unknown', 'Vault is locked')
+    return this.session.findSecrets(text)
+  }
+
   /** Non-secret search documents for the open vault (see `VaultSession.searchDocuments`). */
   searchDocuments() {
     return this.session?.searchDocuments() ?? []
@@ -215,6 +246,17 @@ export class VaultModule implements AppModule {
   writeCustomData(key: string, value: string) {
     if (!this.session || this.session.getCustomData(key) === value) return
     this.mutate((s) => s.setCustomData(key, value))
+  }
+
+  /**
+   * The credentials the renderer asked to remember at the last `vault:open`,
+   * for Touch ID. Handed out once, and only while that vault is still open.
+   */
+  takeBiometricCredentials(fileId: string): { password: string; keyFile?: Uint8Array } | undefined {
+    const pending = this.pendingBiometric
+    this.pendingBiometric = undefined
+    if (!pending || pending.fileId !== fileId || this.openFileId !== fileId) return undefined
+    return { password: pending.password, keyFile: pending.keyFile }
   }
 
   /** Plaintext of one field (or the current TOTP code) for auto-type. Counts as activity. */
@@ -307,7 +349,11 @@ export class VaultModule implements AppModule {
     name: string
   ): Promise<boolean> {
     const { bytes } = this.requireSession().readAttachment(uuid, name)
-    const opts: Electron.SaveDialogOptions = { title: 'Save attachment', defaultPath: name }
+    // The name comes from the vault file: never let it steer the dialog's folder.
+    const opts: Electron.SaveDialogOptions = {
+      title: 'Save attachment',
+      defaultPath: exportDefaultPath(app.getPath('downloads'), name)
+    }
     const res = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
     if (res.canceled || !res.filePath) return false
     await writeFile(res.filePath, bytes)
@@ -321,47 +367,106 @@ export class VaultModule implements AppModule {
    * disk, KeePassXC…), load it, merge it into ours with KeePass's merge rules,
    * and write the result.
    */
-  private async save(): Promise<SaveResult> {
+  private save(): Promise<SaveResult> {
+    // One save at a time: a manual save racing an auto-lock would otherwise
+    // interleave two merges and two writes.
+    const run = (this.saving ?? Promise.resolve()).catch(() => undefined).then(() => this.saveNow())
+    const tracked = run.finally(() => {
+      if (this.saving === tracked) this.saving = undefined
+    })
+    this.saving = tracked
+    return tracked
+  }
+
+  private async saveNow(): Promise<SaveResult> {
     const session = this.requireSession()
     const opened = this.source!
     let merged = false
 
-    if ((await opened.source.revision()) !== opened.revision) {
-      log.info('Stored vault changed since open, merging')
-      const { bytes: remoteBytes } = await opened.source.read()
-      const remote = await loadKdbx(remoteBytes, session.credentials)
-      session.merge(remote)
-      merged = true
-    }
+    for (let round = 0; ; round++) {
+      if ((await opened.source.revision()) !== opened.revision) {
+        log.info('Stored vault changed since open, merging')
+        const { bytes: remoteBytes, revision } = await opened.source.read()
+        const remote = await loadKdbx(remoteBytes, session.credentials)
+        session.merge(remote)
+        opened.revision = revision
+        merged = true
+      }
 
-    const bytes = await session.save()
-    opened.revision = await opened.source.write(bytes)
-    session.markSaved()
+      const savedRevision = session.revision
+      const bytes = await session.save()
+      // The KDF above can take seconds; if someone else saved meanwhile, merge
+      // their copy in rather than overwrite it.
+      try {
+        opened.revision = await opened.source.write(bytes, opened.revision)
+      } catch (e) {
+        if (e instanceof RevisionConflict && round < MAX_SAVE_ROUNDS) continue
+        throw e
+      }
+      // Edits made while the write was in flight are not in `bytes`: stay dirty.
+      session.markSaved(savedRevision)
+      break
+    }
     this.emit({ type: 'changed', snapshot: session.snapshot() })
     this.resetIdle()
     return { merged }
   }
 
   private async autoLock(reason: 'idle' | 'system') {
-    if (this.session?.dirty) {
+    const session = this.session
+    if (!session) return
+    if (session.dirty) {
       // Never throw away edits on an automatic lock.
       try {
         await this.save()
+        this.idleSaveFailures = 0
       } catch (e) {
-        log.error('Auto-save before lock failed; keeping vault open', e)
+        log.error('Auto-save before lock failed', e instanceof Error ? e.message : e)
+        // An idle lock retries a few times (network blip); sleep/screen lock
+        // and repeated failures lock anyway, keeping an encrypted copy.
+        if (reason === 'idle' && ++this.idleSaveFailures < MAX_IDLE_SAVE_ATTEMPTS) {
+          this.resetIdle()
+          return
+        }
+        if (this.session !== session) return
+        const recovered = await this.writeRecoveryCopy(session)
+        this.idleSaveFailures = 0
+        this.lock(reason, recovered ? 'recovered' : 'lost')
         return
       }
     }
-    this.lock(reason)
+    if (this.session === session) this.lock(reason)
   }
 
-  lock(reason: 'manual' | 'idle' | 'system') {
+  /**
+   * Unsaved edits the auto-lock could not write back: store them next to the
+   * app data, encrypted with the vault's own key, so locking never waits on the
+   * network and never silently drops them.
+   */
+  private async writeRecoveryCopy(session: VaultSession): Promise<string | undefined> {
+    try {
+      const dir = join(app.getPath('userData'), 'recovery')
+      await mkdir(dir, { recursive: true, mode: 0o700 })
+      const id = createHash('sha256').update(session.fileId).digest('hex').slice(0, 16)
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      const path = join(dir, `${id}-${stamp}.kdbx`)
+      await writeFile(path, new Uint8Array(await session.save()), { mode: 0o600 })
+      log.warn('Unsaved changes written to a recovery copy')
+      return path
+    } catch (e) {
+      log.error('Could not write a recovery copy', e instanceof Error ? e.message : e)
+      return undefined
+    }
+  }
+
+  lock(reason: 'manual' | 'idle' | 'system', unsaved?: 'recovered' | 'lost') {
     if (!this.session) return
     this.session = undefined
     this.source = undefined
+    this.pendingBiometric = undefined
     clearTimeout(this.idleTimer)
     this.clearClipboard()
-    this.emit({ type: 'locked', reason })
+    this.emit({ type: 'locked', reason, unsaved })
   }
 
   private resetIdle() {
@@ -377,6 +482,11 @@ export class VaultModule implements AppModule {
     this.clipboardValue = value
     clearTimeout(this.clipboardTimer)
     this.clipboardTimer = setTimeout(() => this.clearClipboard(), CLIPBOARD_CLEAR_MS)
+  }
+
+  /** The clipboard currently holds a value Sekure copied (and will clear). */
+  ownsClipboard(): boolean {
+    return this.clipboardValue !== undefined && clipboard.readText() === this.clipboardValue
   }
 
   /** Only clears if the clipboard still holds what we put there. */

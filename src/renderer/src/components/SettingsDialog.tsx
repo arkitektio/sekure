@@ -13,6 +13,7 @@ import { Kbd } from '@/components/ui/kbd'
 import { Separator } from '@/components/ui/separator'
 import { BrandCustomizer } from '@/components/BrandCustomizer'
 import { SmartSearchSettings } from '@/components/SmartSearchSettings'
+import { DeidentifySettings } from '@/components/DeidentifySettings'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePlatform } from '@/hooks/usePlatform'
@@ -116,7 +117,7 @@ export function SettingsButton() {
           setOpen(o)
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
             <DialogDescription>
@@ -219,6 +220,8 @@ export function SettingsButton() {
           )}
           <Separator />
           <SmartSearchSettings />
+          <Separator />
+          <DeidentifySettings />
         </DialogContent>
       </Dialog>
     </>

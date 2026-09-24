@@ -18,6 +18,17 @@ files:
   - package.json
   - '!**/node_modules/**/*'
 asar: true
+# Lock the shipped binary down so a local process can't run code under
+# Sekure's signature (ELECTRON_RUN_AS_NODE, --inspect, NODE_OPTIONS) and read
+# the safeStorage secrets without Touch ID.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableCookieEncryption: true
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: false
 # onnxruntime-web imports and reads its WASM runtime from disk (smart search).
 asarUnpack:
   - out/main/ort/**
@@ -33,7 +44,7 @@ mac:
   target: [dmg, zip]
   category: public.app-category.productivity
   entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
   hardenedRuntime: true
   gatekeeperAssess: false
   notarize: true

@@ -11,6 +11,11 @@ export interface VaultEntrySummary {
   title: string
   username: string
   url: string
+  /**
+   * Standard fields (Title, UserName, URL, Notes) stored protected. Their value
+   * above is '' and must be fetched with `vault:reveal`, like the password.
+   */
+  protectedFields: StandardField[]
   tags: string[]
   icon: number | undefined
   /** Sekure entry type id (see `entryTypes.ts`); `login` for plain KeePass entries. */
@@ -81,12 +86,13 @@ export interface VaultState {
 }
 
 export interface EntryInput {
-  title: string
-  username: string
+  /** For protected standard fields, `undefined` keeps the current value. */
+  title?: string
+  username?: string
   /** `undefined` keeps the existing password untouched. */
   password?: string
-  url: string
-  notes: string
+  url?: string
+  notes?: string
   tags: string[]
   /** Sekure entry type id. `undefined` leaves the entry's type as it is. */
   type?: string
@@ -99,6 +105,11 @@ export interface OpenRequest {
   password: string
   /** Raw key-file bytes, if the database uses one. */
   keyFile?: Uint8Array
+  /**
+   * Keep these credentials in main for a following `biometric:enable`, so the
+   * renderer never sends the password twice.
+   */
+  enableBiometric?: boolean
 }
 
 export interface SaveResult {
@@ -124,7 +135,15 @@ export interface TotpCode {
 
 export type VaultEvent =
   | { type: 'opened'; snapshot: VaultSnapshot }
-  | { type: 'locked'; reason: 'manual' | 'idle' | 'system' }
+  | {
+      type: 'locked'
+      reason: 'manual' | 'idle' | 'system'
+      /**
+       * An automatic lock could not save the open edits. `recovered`: they were
+       * written to an encrypted recovery copy in the app data folder.
+       */
+      unsaved?: 'recovered' | 'lost'
+    }
   | { type: 'changed'; snapshot: VaultSnapshot }
   | { type: 'clipboard-cleared' }
 

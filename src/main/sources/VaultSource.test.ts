@@ -1,9 +1,18 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import {
+  chmodSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import * as kdbxweb from 'kdbxweb'
 import { afterAll, describe, expect, it } from 'vitest'
-import { isDriveSyncedPath, LocalSource } from './VaultSource'
+import { isDriveSyncedPath, LocalSource, RevisionConflict } from './VaultSource'
 import { isLocalId, localId, localPath } from './protocol'
 import { loadKdbx, makeCredentials, VaultSession } from '../vault/VaultSession'
 
@@ -57,6 +66,49 @@ describe('LocalSource', () => {
     expect(next).not.toBe(revision)
     expect(readFileSync(path, 'utf8')).toBe('version-two')
     expect(readdirSync(d)).toEqual(['vault.kdbx'])
+  })
+
+  it('keeps the file mode (a 0600 vault stays private)', async () => {
+    const path = join(dir(), 'vault.kdbx')
+    writeFileSync(path, 'v1', { mode: 0o600 })
+    chmodSync(path, 0o600)
+    await new LocalSource(path).write(buf('v2'))
+    expect(statSync(path).mode & 0o777).toBe(0o600)
+  })
+
+  it('leaves the original untouched when the temp copy cannot be written', async () => {
+    const d = dir()
+    const path = join(d, 'vault.kdbx')
+    writeFileSync(path, 'precious')
+    chmodSync(d, 0o555) // like a full disk: nothing new can be created here
+    try {
+      await expect(new LocalSource(path).write(buf('new'))).rejects.toThrow()
+    } finally {
+      chmodSync(d, 0o755)
+    }
+    expect(readFileSync(path, 'utf8')).toBe('precious')
+    expect(readdirSync(d)).toEqual(['vault.kdbx'])
+  })
+
+  it('refuses to write over a copy that changed since the expected revision', async () => {
+    const path = join(dir(), 'vault.kdbx')
+    writeFileSync(path, 'v1')
+    const src = new LocalSource(path)
+    const expected = await src.revision()
+    writeFileSync(path, 'someone else, longer')
+    await expect(src.write(buf('mine'), expected)).rejects.toBeInstanceOf(RevisionConflict)
+    expect(readFileSync(path, 'utf8')).toBe('someone else, longer')
+  })
+
+  it('writes through a symlink instead of replacing it', async () => {
+    const d = dir()
+    const target = join(d, 'real.kdbx')
+    const link = join(d, 'link.kdbx')
+    writeFileSync(target, 'v1')
+    symlinkSync(target, link)
+    await new LocalSource(link).write(buf('v2'))
+    expect(readFileSync(target, 'utf8')).toBe('v2')
+    expect(readFileSync(link, 'utf8')).toBe('v2')
   })
 
   it('reports a new revision when something else rewrites the file', async () => {

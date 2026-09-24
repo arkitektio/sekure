@@ -13,11 +13,14 @@ import type { VaultSnapshot } from '../../../main/vault/protocol'
  */
 export function QuickUnlock({
   openedAt,
-  onUnlocked
+  onUnlocked,
+  keepOpen = api.autotype.keepOpen
 }: {
   /** Changes every time the popup opens, to re-offer Touch ID. */
   openedAt: number
   onUnlocked: (snapshot: VaultSnapshot) => void
+  /** Keep the hosting popup open while Touch ID takes focus. */
+  keepOpen?: (keep: boolean) => Promise<unknown>
 }) {
   const [vault, setVault] = useState<RecentVault | null>()
   const [bio, setBio] = useState(false)
@@ -31,7 +34,7 @@ export function QuickUnlock({
       setBusy('touchid')
       setError(undefined)
       // The system prompt takes focus; don't let that close the popup.
-      await api.autotype.keepOpen(true)
+      await keepOpen(true)
       try {
         onUnlocked(await api.biometric.unlock(fileId))
       } catch (e) {
@@ -40,12 +43,25 @@ export function QuickUnlock({
         if (errorCode(e) === 'InvalidKey') setBio(false)
         passwordRef.current?.focus()
       } finally {
-        await api.autotype.keepOpen(false)
+        await keepOpen(false)
         setBusy(undefined)
       }
     },
-    [onUnlocked]
+    [onUnlocked, keepOpen]
   )
+
+  // The popup window is hidden, not destroyed: never carry a typed master
+  // password over to the next time it opens, or keep it while hidden.
+  const [shownAt, setShownAt] = useState(openedAt)
+  if (shownAt !== openedAt) {
+    setShownAt(openedAt)
+    setPassword('')
+  }
+  useEffect(() => {
+    const clear = () => setPassword('')
+    window.addEventListener('blur', clear)
+    return () => window.removeEventListener('blur', clear)
+  }, [])
 
   useEffect(() => {
     let cancelled = false

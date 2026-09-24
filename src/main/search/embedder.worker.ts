@@ -1,25 +1,18 @@
 // Worker thread that owns the embedding model, so indexing never blocks main.
-import { parentPort, workerData } from 'worker_threads'
+import { workerData } from 'worker_threads'
+import { serveModel } from '../models/workerHost'
 import { loadE5, type E5Options } from './e5'
-import type { WorkerRequest, WorkerResponse } from './WorkerEmbedder'
 
-const port = parentPort!
-const post = (msg: WorkerResponse, transfer: ArrayBuffer[] = []) => port.postMessage(msg, transfer)
+export interface EmbedRequest {
+  id: number
+  texts: string[]
+  kind: 'query' | 'passage'
+}
 
-const model = loadE5(workerData as E5Options)
-model.then(
-  () => post({ type: 'ready' }),
-  (e) => post({ type: 'failed', error: String(e) })
+serveModel<EmbedRequest, Float32Array[]>(
+  async () => {
+    const model = await loadE5(workerData as E5Options)
+    return (req) => model.embed(req.texts, req.kind)
+  },
+  (vectors) => vectors.map((v) => v.buffer as ArrayBuffer)
 )
-
-port.on('message', async (req: WorkerRequest) => {
-  try {
-    const vectors = await (await model).embed(req.texts, req.kind)
-    post(
-      { type: 'result', id: req.id, vectors },
-      vectors.map((v) => v.buffer as ArrayBuffer)
-    )
-  } catch (e) {
-    post({ type: 'error', id: req.id, error: String(e) })
-  }
-})

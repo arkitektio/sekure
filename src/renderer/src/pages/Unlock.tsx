@@ -87,10 +87,16 @@ export function Unlock() {
     setBusy('password')
     setError(undefined)
     try {
-      const snapshot = await api.vault.open({ fileId, password, keyFile: keyFile?.bytes })
-      if (bioAvailable && !bioEnabled && enableBio) {
+      const wantBio = bioAvailable && !bioEnabled && enableBio
+      const snapshot = await api.vault.open({
+        fileId,
+        password,
+        keyFile: keyFile?.bytes,
+        enableBiometric: wantBio
+      })
+      if (wantBio) {
         try {
-          await api.biometric.enable(fileId, password, keyFile?.bytes)
+          await api.biometric.enable(fileId)
           toast.success('Touch ID enabled for this vault')
         } catch (err) {
           if (!/cancel/i.test(displayError(err))) toast.error(displayError(err))

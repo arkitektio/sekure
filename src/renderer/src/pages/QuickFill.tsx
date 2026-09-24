@@ -9,7 +9,7 @@ import {
   CommandList
 } from '@/components/ui/command'
 import { Kbd } from '@/components/ui/kbd'
-import { api, displayError } from '@/lib/api'
+import { api, displayError, entryTitle } from '@/lib/api'
 import { renderEntryIcon } from '@/vault/icons'
 import { QuickUnlock } from '@/vault/QuickUnlock'
 import { suggestEntries } from '@/vault/autotype'
@@ -31,11 +31,19 @@ interface FieldOption {
 function fieldOptions(entry: VaultEntryDetail): FieldOption[] {
   const out: FieldOption[] = []
   if (entry.hasPassword) out.push({ field: 'Password', label: 'Password', icon: <KeyRound /> })
-  if (entry.username) {
-    out.push({ field: 'UserName', label: 'Username', icon: <AtSign />, hint: entry.username })
+  const isProtected = (k: 'UserName' | 'URL') => entry.protectedFields.includes(k)
+  if (entry.username || isProtected('UserName')) {
+    out.push({
+      field: 'UserName',
+      label: 'Username',
+      icon: <AtSign />,
+      hint: entry.username || undefined
+    })
   }
   if (entry.hasOtp) out.push({ field: OTP_FIELD, label: 'One-time code', icon: <Clock /> })
-  if (entry.url) out.push({ field: 'URL', label: 'URL', icon: <Link />, hint: entry.url })
+  if (entry.url || isProtected('URL')) {
+    out.push({ field: 'URL', label: 'URL', icon: <Link />, hint: entry.url || undefined })
+  }
   for (const f of entry.customFields) {
     out.push({
       field: f.key,
@@ -152,7 +160,7 @@ export function QuickFill() {
       onSelect={() => void pickEntry(e)}
     >
       {renderEntryIcon(e.icon)}
-      <span className="truncate">{e.title || '(untitled)'}</span>
+      <span className="truncate">{entryTitle(e)}</span>
       <span className="truncate text-xs text-muted-foreground">{e.username}</span>
     </CommandItem>
   )
@@ -178,7 +186,7 @@ export function QuickFill() {
                 <ArrowLeft className="size-4" />
               </button>
               {renderEntryIcon(entry.icon)}
-              <span className="truncate font-medium">{entry.title || '(untitled)'}</span>
+              <span className="truncate font-medium">{entryTitle(entry)}</span>
             </div>
           )}
           <CommandInput

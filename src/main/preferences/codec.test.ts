@@ -1,13 +1,46 @@
 import { describe, expect, it } from 'vitest'
-import { decodePreferences, encodePreferences, sanitizeBrand } from './codec'
+import { decodePreferences, encodePreferences, isSafeGlobalShortcut, sanitizeBrand } from './codec'
 
 describe('preferences codec', () => {
-  it('round-trips brand and auto-type settings', () => {
+  it('round-trips brand and the auto-type shortcut', () => {
     const prefs = {
       brand: { hue: 145, chroma: 0.18 },
-      autotype: { enabled: true, shortcut: 'CommandOrControl+Alt+Shift+K' }
+      autotype: { shortcut: 'CommandOrControl+Alt+Shift+K' }
     }
     expect(decodePreferences(encodePreferences(prefs))).toEqual(prefs)
+  })
+
+  it('never imports whether auto-type is enabled', () => {
+    expect(
+      decodePreferences(JSON.stringify({ autotype: { enabled: true, shortcut: 'Ctrl+Alt+K' } }))
+    ).toEqual({ autotype: { shortcut: 'Ctrl+Alt+K' } })
+    expect(decodePreferences(JSON.stringify({ autotype: { enabled: true } }))).toEqual({})
+  })
+
+  it('drops shortcuts that would hijack common keys', () => {
+    for (const bad of [
+      'CommandOrControl+V',
+      'Cmd+C',
+      'Ctrl+Q',
+      'Enter',
+      'Shift+A',
+      'Alt+Shift+K',
+      'CommandOrControl+Tab',
+      'Ctrl++',
+      'Ctrl+K+L',
+      'Ctrl+Ctrl+K'
+    ]) {
+      expect(isSafeGlobalShortcut(bad), bad).toBe(false)
+      expect(decodePreferences(JSON.stringify({ autotype: { shortcut: bad } })), bad).toEqual({})
+    }
+    for (const good of [
+      'CommandOrControl+Alt+Shift+K',
+      'Ctrl+Alt+V',
+      'Cmd+Shift+Space',
+      'Super+K'
+    ]) {
+      expect(isSafeGlobalShortcut(good), good).toBe(true)
+    }
   })
 
   it('keeps an explicit reset (brand: null) apart from "no opinion"', () => {

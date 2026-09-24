@@ -9,7 +9,16 @@ export const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token'
 export const REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke'
 export const USERINFO_ENDPOINT = 'https://openidconnect.googleapis.com/v1/userinfo'
 
-export const SCOPES = ['openid', 'email', 'profile', 'https://www.googleapis.com/auth/drive']
+/**
+ * `drive.file`: only files the user created with Sekure or picked in the
+ * Google Picker. A leaked refresh token then exposes the vaults, not the
+ * user's whole Drive.
+ */
+export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
+export const SCOPES = ['openid', 'email', 'profile', DRIVE_SCOPE]
+
+/** Every Google request gives up after this long. */
+export const REQUEST_TIMEOUT_MS = 30_000
 
 export interface OAuthClient {
   clientId: string
@@ -19,6 +28,8 @@ export interface OAuthClient {
 export interface TokenSet {
   accessToken: string
   refreshToken?: string
+  /** Space-separated scopes Google actually granted. */
+  scope?: string
   /** Epoch ms. */
   expiresAt: number
 }
@@ -76,11 +87,14 @@ async function tokenRequest(body: Record<string, string>): Promise<TokenSet> {
   const res = await fetch(TOKEN_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(body)
+    body: new URLSearchParams(body),
+    // A hung refresh would otherwise block every Drive call sharing it.
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   })
   const json = (await res.json()) as {
     access_token?: string
     refresh_token?: string
+    scope?: string
     expires_in?: number
     error?: string
     error_description?: string
@@ -95,6 +109,7 @@ async function tokenRequest(body: Record<string, string>): Promise<TokenSet> {
   return {
     accessToken: json.access_token,
     refreshToken: json.refresh_token,
+    scope: json.scope,
     // Refresh a minute early so a request never races the expiry.
     expiresAt: Date.now() + ((json.expires_in ?? 3600) - 60) * 1000
   }
@@ -125,19 +140,51 @@ export function refreshAccessToken(client: OAuthClient, refreshToken: string): P
   })
 }
 
-export async function revokeToken(token: string): Promise<void> {
-  await fetch(REVOKE_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ token })
-  }).catch(() => undefined)
+/** True if Google confirmed the revocation. */
+export async function revokeToken(token: string): Promise<boolean> {
+  try {
+    const res = await fetch(REVOKE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+/** Largest avatar we inline as a data: URL. */
+const MAX_AVATAR_BYTES = 256 * 1024
+
+/**
+ * The profile picture as a data: URL, fetched here so the renderer CSP needs
+ * no remote image host. Undefined if it is missing, not an image or too big.
+ */
+async function avatarDataUrl(picture: string | undefined): Promise<string | undefined> {
+  const url = picture ? URL.parse(picture) : null
+  if (!url || url.protocol !== 'https:' || !url.hostname.endsWith('.googleusercontent.com')) {
+    return undefined
+  }
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+    const type = res.headers.get('content-type')?.split(';')[0].trim() ?? ''
+    if (!res.ok || !/^image\/(png|jpeg|gif|webp)$/.test(type)) return undefined
+    const bytes = Buffer.from(await res.arrayBuffer())
+    if (bytes.byteLength > MAX_AVATAR_BYTES) return undefined
+    return `data:${type};base64,${bytes.toString('base64')}`
+  } catch {
+    return undefined
+  }
 }
 
 export async function fetchAccount(accessToken: string): Promise<GoogleAccount> {
   const res = await fetch(USERINFO_ENDPOINT, {
-    headers: { Authorization: `Bearer ${accessToken}` }
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   })
   if (!res.ok) throw new Error(`userinfo failed (${res.status})`)
   const json = (await res.json()) as { email: string; name?: string; picture?: string }
-  return { email: json.email, name: json.name, picture: json.picture }
+  return { email: json.email, name: json.name, picture: await avatarDataUrl(json.picture) }
 }

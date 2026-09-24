@@ -4,6 +4,7 @@ import { defineConfig } from 'electron-vite'
 import type { Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { CONTENT_SECURITY_POLICY, DEV_CONNECT_SRC } from './src/main/scheme'
 
 /**
  * onnxruntime-web loads its WASM runtime at run time, so ship it next to the
@@ -19,6 +20,30 @@ function copyOrtWasm(): Plugin {
       for (const f of files) {
         copyFileSync(resolve(__dirname, 'node_modules/onnxruntime-web/dist', f), resolve(out, f))
       }
+    }
+  }
+}
+
+/**
+ * Write the renderer CSP into index.html. The dev server's HMR websocket is
+ * allowed only under `electron-vite dev`, never in a build.
+ */
+function injectCsp(): Plugin {
+  let serving = false
+  return {
+    name: 'sekure:csp',
+    configResolved(config) {
+      serving = config.command === 'serve'
+    },
+    transformIndexHtml(html) {
+      // frame-ancestors only works as a header (sent by the app:// handler);
+      // in a <meta> tag Chromium ignores it with a console warning.
+      const meta = CONTENT_SECURITY_POLICY.replace(/; frame-ancestors [^;]*/, '')
+      const csp = serving
+        ? meta.replace("connect-src 'self'", `connect-src 'self' ${DEV_CONNECT_SRC}`)
+        : meta
+      if (!html.includes('%SEKURE_CSP%')) throw new Error('index.html lost its CSP placeholder')
+      return html.replace('%SEKURE_CSP%', csp)
     }
   }
 }
@@ -41,7 +66,7 @@ export default defineConfig({
     }
   },
   renderer: {
-    plugins: [react(), tailwindcss()],
+    plugins: [injectCsp(), react(), tailwindcss()],
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src/renderer/src')

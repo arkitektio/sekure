@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from 'fs'
 import { homedir } from 'os'
-import { join } from 'path'
+import { isAbsolute, join } from 'path'
 import { BrowserWindow, dialog } from 'electron'
 import Store from 'electron-store'
 import { AppModule } from './AppModule'
@@ -36,6 +36,8 @@ export class SourcesModule implements AppModule {
     name: 'sources',
     defaults: { recent: [] }
   })
+  /** Local paths the user chose in the file dialog this session. */
+  private picked = new Set<string>()
 
   constructor(
     private ipc: IpcTransport,
@@ -59,8 +61,20 @@ export class SourcesModule implements AppModule {
     )
   }
 
+  /**
+   * Local ids come from the renderer, so they must name a file the user chose
+   * in the file dialog (this session) or opened before (recent). Otherwise a
+   * compromised renderer could probe or open any path on disk.
+   */
   resolve(id: string): VaultSource {
-    return isLocalId(id) ? new LocalSource(localPath(id)) : new DriveSource(this.drive.client, id)
+    if (isLocalId(id)) {
+      const path = localPath(id)
+      const known = this.picked.has(path) || this.recent().some((r) => r.id === id)
+      if (!isAbsolute(path) || !known) throw new Error('Choose this file with “Open local file”')
+      return new LocalSource(path)
+    }
+    if (!/^[\w-]{10,200}$/.test(id)) throw new Error('Not a Google Drive file id')
+    return new DriveSource(this.drive.client, id)
   }
 
   remember(ref: VaultRef) {
@@ -95,6 +109,7 @@ export class SourcesModule implements AppModule {
     }
     const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     if (res.canceled || !res.filePaths[0]) return null
+    this.picked.add(res.filePaths[0])
     return new LocalSource(res.filePaths[0]).describe()
   }
 }

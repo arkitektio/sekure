@@ -35,15 +35,28 @@ const toFile = (f: RawFile): DriveFile => ({
  * Minimal Drive v3 REST client. `getToken` is called per request so the auth
  * module can refresh transparently; nothing here stores credentials.
  */
-export class DriveClient {
-  constructor(private getToken: () => Promise<string>) {}
+/** Metadata calls; uploads and downloads of a vault get longer. */
+const REQUEST_TIMEOUT_MS = 30_000
+const TRANSFER_TIMEOUT_MS = 5 * 60_000
 
-  private async request(url: string, init: RequestInit = {}): Promise<Response> {
-    const token = await this.getToken()
-    const res = await fetch(url, {
-      ...init,
-      headers: { ...(init.headers ?? {}), Authorization: `Bearer ${token}` }
-    })
+export class DriveClient {
+  /** `force` skips the cached access token (it was rejected with a 401). */
+  constructor(private getToken: (force?: boolean) => Promise<string>) {}
+
+  private async request(
+    url: string,
+    init: RequestInit = {},
+    timeoutMs = REQUEST_TIMEOUT_MS
+  ): Promise<Response> {
+    const send = async (force: boolean) =>
+      fetch(url, {
+        ...init,
+        headers: { ...(init.headers ?? {}), Authorization: `Bearer ${await this.getToken(force)}` },
+        signal: AbortSignal.timeout(timeoutMs)
+      })
+    let res = await send(false)
+    // Revoked or rotated mid-life: refresh once and retry.
+    if (res.status === 401) res = await send(true)
     if (!res.ok) {
       let message = `Drive request failed (${res.status})`
       try {
@@ -95,7 +108,7 @@ export class DriveClient {
     const url = new URL(`${API}/files/${encodeURIComponent(fileId)}`)
     url.searchParams.set('alt', 'media')
     url.searchParams.set('supportsAllDrives', 'true')
-    const res = await this.request(url.toString())
+    const res = await this.request(url.toString(), {}, TRANSFER_TIMEOUT_MS)
     return res.arrayBuffer()
   }
 
@@ -104,11 +117,15 @@ export class DriveClient {
     url.searchParams.set('uploadType', 'media')
     url.searchParams.set('fields', FILE_FIELDS)
     url.searchParams.set('supportsAllDrives', 'true')
-    const res = await this.request(url.toString(), {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: bytes
-    })
+    const res = await this.request(
+      url.toString(),
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: bytes
+      },
+      TRANSFER_TIMEOUT_MS
+    )
     return toFile((await res.json()) as RawFile)
   }
 }

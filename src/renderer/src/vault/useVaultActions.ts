@@ -32,10 +32,23 @@ export function useVaultActions() {
 
   const lock = useCallback(async () => {
     const fileId = snapshot?.fileId
-    await api.vault.lock()
-    // The 'locked' event resets the store; route explicitly for snappiness.
-    navigate(fileId ? unlockPath(fileId) : '/files', { replace: true })
-  }, [navigate, snapshot?.fileId])
+    const lockNow = async () => {
+      await api.vault.lock()
+      // The 'locked' event resets the store; route explicitly for snappiness.
+      navigate(fileId ? unlockPath(fileId) : '/files', { replace: true })
+    }
+    // Locking drops the in-memory vault: save unsaved edits first, and only
+    // throw them away if the user says so.
+    if (snapshot?.dirty && !(await save())) {
+      toast.warning('Your changes are not saved', {
+        description: 'Locking now discards them.',
+        action: { label: 'Lock anyway', onClick: () => void lockNow() },
+        duration: 10_000
+      })
+      return
+    }
+    await lockNow()
+  }, [navigate, save, snapshot?.fileId, snapshot?.dirty])
 
   return { save, lock }
 }

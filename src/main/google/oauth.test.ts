@@ -45,6 +45,11 @@ describe('buildAuthUrl', () => {
     })
     expect(url.searchParams.get('scope')!.split(' ')).toEqual(SCOPES)
   })
+
+  it('asks for drive.file, never the whole Drive', () => {
+    expect(SCOPES).toContain('https://www.googleapis.com/auth/drive.file')
+    expect(SCOPES).not.toContain('https://www.googleapis.com/auth/drive')
+  })
 })
 
 describe('parseCallback', () => {

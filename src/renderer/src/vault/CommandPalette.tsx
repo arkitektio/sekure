@@ -12,7 +12,7 @@ import {
   CommandShortcut
 } from '@/components/ui/command'
 import { useVault } from '@/stores/vault'
-import { api, displayError } from '@/lib/api'
+import { api, displayError, entryTitle } from '@/lib/api'
 import { renderSummaryIcon } from './icons'
 import { useVaultActions } from './useVaultActions'
 import { rankEntries, useSearch } from './useSearch'
@@ -64,7 +64,7 @@ export function CommandPalette({
   const entryItem = (e: VaultEntrySummary) => (
     <CommandItem key={e.uuid} value={e.uuid} onSelect={() => run(() => selectEntry(e.uuid))}>
       {renderSummaryIcon(e)}
-      <span className="truncate">{e.title || '(untitled)'}</span>
+      <span className="truncate">{entryTitle(e)}</span>
       <span className="truncate text-xs text-muted-foreground">{e.subtitle}</span>
       <div className="ml-auto flex gap-1">
         {e.username && (

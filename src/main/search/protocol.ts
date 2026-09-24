@@ -44,5 +44,3 @@ export const MODEL = {
     }
   ]
 } as const
-
-export const MODEL_BYTES = MODEL.files.reduce((n, f) => n + f.size, 0)

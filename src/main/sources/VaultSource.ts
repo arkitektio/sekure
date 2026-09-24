@@ -1,7 +1,8 @@
 import { randomBytes } from 'crypto'
-import { readFile, rename, stat, unlink, writeFile } from 'fs/promises'
+import { copyFile, open, readFile, realpath, rename, stat, unlink, writeFile } from 'fs/promises'
 import { basename, dirname, join } from 'path'
-import type { DriveClient } from '../drive/DriveClient'
+import { DriveError, type DriveClient } from '../drive/DriveClient'
+import { VaultError } from '../vault/VaultSession'
 import type { DriveFile } from '../drive/protocol'
 import { localId, type VaultRef } from './protocol'
 
@@ -15,8 +16,18 @@ export interface VaultSource {
   describe(): Promise<VaultRef>
   read(): Promise<{ bytes: ArrayBuffer; revision: string }>
   revision(): Promise<string>
-  /** Persist and return the new revision. */
-  write(bytes: ArrayBuffer): Promise<string>
+  /**
+   * Persist and return the new revision. With `expected`, throws
+   * `RevisionConflict` instead of writing if the stored copy moved on.
+   */
+  write(bytes: ArrayBuffer, expected?: string): Promise<string>
+}
+
+/** The stored copy changed between the last read and this write. */
+export class RevisionConflict extends Error {
+  constructor() {
+    super('The vault was changed elsewhere while saving')
+  }
 }
 
 /** Drive bumps `headRevisionId` on every content change; fall back to mtime. */
@@ -29,8 +40,19 @@ export class DriveSource implements VaultSource {
   ) {}
 
   async describe(): Promise<VaultRef> {
-    const meta = await this.client.metadata(this.fileId)
-    return { id: this.fileId, kind: 'drive', name: meta.name, location: 'Google Drive' }
+    try {
+      const meta = await this.client.metadata(this.fileId)
+      return { id: this.fileId, kind: 'drive', name: meta.name, location: 'Google Drive' }
+    } catch (e) {
+      // With drive.file, a file Sekure was never given looks like a missing one.
+      if (e instanceof DriveError && e.status === 404) {
+        throw new VaultError(
+          'NotFound',
+          'Sekure has no access to this file. Choose it again with “Choose from Google Drive”.'
+        )
+      }
+      throw e
+    }
   }
 
   async read() {
@@ -45,7 +67,9 @@ export class DriveSource implements VaultSource {
     return driveRevision(await this.client.metadata(this.fileId))
   }
 
-  async write(bytes: ArrayBuffer) {
+  async write(bytes: ArrayBuffer, expected?: string) {
+    // Drive v3 has no If-Match on media uploads; check as late as we can.
+    if (expected !== undefined && (await this.revision()) !== expected) throw new RevisionConflict()
     return driveRevision(await this.client.upload(this.fileId, bytes))
   }
 }
@@ -61,6 +85,9 @@ export function isDriveSyncedPath(path: string): boolean {
     /^[A-Z]:\\My Drive\\/i.test(path) // Windows virtual drive
   )
 }
+
+/** Errors some sync providers (and Windows, with the file open) give for rename-over. */
+const RENAME_REFUSED = new Set(['EXDEV', 'EPERM', 'EBUSY', 'EACCES'])
 
 export class LocalSource implements VaultSource {
   constructor(private path: string) {}
@@ -93,22 +120,42 @@ export class LocalSource implements VaultSource {
   }
 
   /**
-   * Write to a temp file next to the vault and rename it over the original,
-   * so a crash mid-write never leaves a truncated database. Some sync
-   * providers refuse the rename; fall back to writing in place.
+   * Write to a temp file next to the vault (same permissions, fsynced) and
+   * rename it over the original, so a crash or a full disk never leaves a
+   * truncated database. If writing the temp file fails, the original is left
+   * alone. Only when a sync provider refuses the rename do we write in place,
+   * and then only after copying the original to `.<name>.bak`.
    */
-  async write(bytes: ArrayBuffer) {
+  async write(bytes: ArrayBuffer, expected?: string) {
+    if (expected !== undefined && (await this.revision()) !== expected) throw new RevisionConflict()
     const data = new Uint8Array(bytes)
-    const tmp = join(
-      dirname(this.path),
-      `.${basename(this.path)}.${randomBytes(4).toString('hex')}.tmp`
-    )
+    // Write through a symlinked vault to its target instead of replacing the link.
+    const path = await realpath(this.path)
+    const dir = dirname(path)
+    const name = basename(path)
+    const mode = (await stat(path)).mode & 0o777
+    const tmp = join(dir, `.${name}.${randomBytes(4).toString('hex')}.tmp`)
+
     try {
-      await writeFile(tmp, data)
-      await rename(tmp, this.path)
-    } catch {
+      const fh = await open(tmp, 'wx', mode)
+      try {
+        await fh.writeFile(data)
+        await fh.sync()
+      } finally {
+        await fh.close()
+      }
+    } catch (e) {
       await unlink(tmp).catch(() => undefined)
-      await writeFile(this.path, data)
+      throw e
+    }
+
+    try {
+      await rename(tmp, path)
+    } catch (e) {
+      await unlink(tmp).catch(() => undefined)
+      if (!RENAME_REFUSED.has((e as NodeJS.ErrnoException).code ?? '')) throw e
+      await copyFile(path, join(dir, `.${name}.bak`))
+      await writeFile(path, data)
     }
     return this.revision()
   }

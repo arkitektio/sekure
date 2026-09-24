@@ -16,11 +16,25 @@ export const DEFAULT_PASSWORD_OPTIONS: PasswordOptions = {
   unambiguous: true
 }
 
+export const MIN_PASSWORD_LENGTH = 4
+export const MAX_PASSWORD_LENGTH = 1024
+
 /**
  * CSPRNG password with at least one character from every enabled class.
- * `randomInt` is uniform (no modulo bias).
+ * `randomInt` is uniform (no modulo bias). Options come from the renderer, so
+ * missing ones take the defaults and the length must be a sane integer.
  */
-export function generatePassword(opts: PasswordOptions): string {
+export function generatePassword(partial: Partial<PasswordOptions> = {}): string {
+  const opts = { ...DEFAULT_PASSWORD_OPTIONS, ...partial }
+  if (
+    !Number.isInteger(opts.length) ||
+    opts.length < MIN_PASSWORD_LENGTH ||
+    opts.length > MAX_PASSWORD_LENGTH
+  ) {
+    throw new Error(
+      `Password length must be between ${MIN_PASSWORD_LENGTH} and ${MAX_PASSWORD_LENGTH}`
+    )
+  }
   const classes = [
     opts.lower && LOWER,
     opts.upper && UPPER,

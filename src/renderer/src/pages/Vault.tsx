@@ -46,7 +46,15 @@ export function Vault() {
         if (event.type === 'locked') {
           const fileId = useVault.getState().snapshot?.fileId
           reset()
-          if (event.reason !== 'manual') {
+          if (event.unsaved === 'recovered') {
+            toast.warning('Locked with unsaved changes', {
+              description:
+                'They could not be saved and were kept in an encrypted recovery copy in the Sekure data folder.',
+              duration: Infinity
+            })
+          } else if (event.unsaved === 'lost') {
+            toast.error('Locked — unsaved changes could not be saved', { duration: Infinity })
+          } else if (event.reason !== 'manual') {
             toast.info(event.reason === 'idle' ? 'Locked after inactivity' : 'Locked with your Mac')
           }
           navigate(fileId ? unlockPath(fileId) : '/files', { replace: true })

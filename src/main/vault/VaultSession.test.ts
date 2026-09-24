@@ -1,7 +1,14 @@
 import * as kdbxweb from 'kdbxweb'
 import { describe, expect, it } from 'vitest'
 import { installArgon2 } from './argon2'
-import { makeCredentials, VaultError, VaultSession } from './VaultSession'
+import {
+  checkKdfParameters,
+  KDF_LIMITS,
+  loadKdbx,
+  makeCredentials,
+  VaultError,
+  VaultSession
+} from './VaultSession'
 import { generatePassword } from './generator'
 import { base32Decode, parseOtp, totp } from './totp'
 
@@ -302,6 +309,41 @@ describe('searchDocuments', () => {
   })
 })
 
+describe('findSecrets', () => {
+  it('finds passwords, protected fields, OTP seeds and card numbers, reporting names only', async () => {
+    const session = await open(await makeFile())
+    session.createEntry(undefined, {
+      title: 'Visa',
+      username: '',
+      url: '',
+      notes: '',
+      tags: [],
+      type: 'creditCard',
+      customFields: [
+        { key: 'Card number', value: '4111111111111111', protected: false },
+        { key: 'CVV', value: '737', protected: false }
+      ]
+    })
+    const text =
+      'pw s3cret, recovery abc-def, seed gezdgnbvgy3tqojqgezdgnbvgy3tqojq, card 4111-1111-1111-1111 cvv 737, order 97371'
+    const hits = session.findSecrets(text)
+    const found = hits.map((h) => [text.slice(h.start, h.end), `${h.entry} / ${h.field}`])
+    expect(found).toEqual(
+      expect.arrayContaining([
+        ['s3cret', 'Gmail / Password'],
+        ['abc-def', 'Gmail / Recovery'],
+        ['gezdgnbvgy3tqojqgezdgnbvgy3tqojq', 'Gmail / one-time code seed'],
+        ['4111-1111-1111-1111', 'Visa / Card number'],
+        ['737', 'Visa / CVV']
+      ])
+    )
+    expect(found.map((f) => f[0])).not.toContain('97371')
+    for (const secret of ['s3cret', 'abc-def', '4111', '737']) {
+      expect(JSON.stringify(hits)).not.toContain(secret)
+    }
+  })
+})
+
 describe('attachments', () => {
   const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
   const PDF = new TextEncoder().encode('%PDF-1.7 fake')
@@ -362,11 +404,142 @@ describe('generatePassword', () => {
   })
 })
 
+describe('generatePassword validation', () => {
+  it('fills in missing options instead of producing a short password', () => {
+    expect(generatePassword({ symbols: false })).toHaveLength(24)
+    expect(generatePassword()).toHaveLength(24)
+  })
+
+  it('rejects absurd or non-integer lengths', () => {
+    for (const length of [0, 3, 1025, 1e9, 12.5, Number.NaN]) {
+      expect(() => generatePassword({ length }), String(length)).toThrow(/between/)
+    }
+  })
+})
+
+describe('key derivation limits', () => {
+  const U64 = kdbxweb.VarDictionary.ValueType.UInt64
+
+  /**
+   * Just a KDBX4 header with the given KDF parameters, as a crafted file would
+   * carry. The check has to reject it before the KDF (or anything else) runs.
+   */
+  const header = (kdf: string, params: Record<string, number>) => {
+    const db = kdbxweb.Kdbx.create(makeCredentials('pw'), 'KDF')
+    db.setVersion(4)
+    db.setKdf(kdf)
+    for (const [key, value] of Object.entries(params)) {
+      db.header.kdfParameters!.set(key, U64, kdbxweb.Int64.from(value))
+    }
+    db.header.generateSalts()
+    const stm = new kdbxweb.BinaryStream()
+    db.header.write(stm)
+    return stm.getWrittenBytes()
+  }
+
+  it('accepts ordinary files and leaves unreadable ones to Kdbx.load', async () => {
+    expect(() => checkKdfParameters(new Uint8Array(0).buffer)).not.toThrow()
+    const ordinary = await makeFile()
+    expect(() => checkKdfParameters(ordinary)).not.toThrow()
+    expect(() =>
+      checkKdfParameters(header(kdbxweb.Consts.KdfId.Argon2id, { M: 64 * 1024 * 1024, I: 3 }))
+    ).not.toThrow()
+  })
+
+  it('refuses Argon2 memory, iterations or parallelism beyond the limits', async () => {
+    const tooMuch: Record<string, number>[] = [
+      { M: KDF_LIMITS.argon2MemoryBytes + 1024 },
+      { I: KDF_LIMITS.argon2Iterations + 1 },
+      { P: KDF_LIMITS.argon2Parallelism + 1 },
+      { I: 2 ** 40 }
+    ]
+    for (const params of tooMuch) {
+      for (const kdf of [kdbxweb.Consts.KdfId.Argon2d, kdbxweb.Consts.KdfId.Argon2id]) {
+        const bytes = header(kdf, params)
+        expect(() => checkKdfParameters(bytes), JSON.stringify(params)).toThrow(VaultError)
+        await expect(loadKdbx(bytes, makeCredentials('pw'))).rejects.toThrow(/key derivation/)
+      }
+    }
+  })
+
+  it('refuses AES-KDF rounds beyond the limit', () => {
+    const bytes = header(kdbxweb.Consts.KdfId.Aes, { R: KDF_LIMITS.aesRounds * 10 })
+    expect(() => checkKdfParameters(bytes)).toThrow(VaultError)
+  })
+})
+
+describe('protected standard fields', () => {
+  it('keeps protected Title/UserName/URL/Notes out of snapshots and details', async () => {
+    const db = kdbxweb.Kdbx.create(makeCredentials('pw'), 'Protected')
+    const entry = db.createEntry(db.getDefaultGroup())
+    entry.fields.set('Title', kdbxweb.ProtectedValue.fromString('Secret bank'))
+    entry.fields.set('UserName', kdbxweb.ProtectedValue.fromString('agent-007'))
+    entry.fields.set('URL', kdbxweb.ProtectedValue.fromString('https://hidden.example'))
+    entry.fields.set('Notes', kdbxweb.ProtectedValue.fromString('pin 1234'))
+    entry.fields.set('Password', kdbxweb.ProtectedValue.fromString('pw'))
+    const session = await VaultSession.open(await db.save(), makeCredentials('pw'), 'f', 'f')
+
+    const snapshot = JSON.stringify(session.snapshot())
+    const detail = session.entryDetail(entry.uuid.id)
+    for (const secret of ['Secret bank', 'agent-007', 'hidden.example', 'pin 1234']) {
+      expect(snapshot).not.toContain(secret)
+      expect(JSON.stringify(detail)).not.toContain(secret)
+    }
+    expect(detail.protectedFields.sort()).toEqual(['Notes', 'Title', 'URL', 'UserName'])
+    expect(detail.hasPassword).toBe(true)
+    expect(session.reveal(entry.uuid.id, 'UserName')).toBe('agent-007')
+  })
+
+  it('keeps a protected field protected, and unchanged when not sent, on edit', async () => {
+    const db = kdbxweb.Kdbx.create(makeCredentials('pw'), 'Protected')
+    const entry = db.createEntry(db.getDefaultGroup())
+    entry.fields.set('UserName', kdbxweb.ProtectedValue.fromString('agent-007'))
+    entry.fields.set('Notes', kdbxweb.ProtectedValue.fromString('pin 1234'))
+    const session = await VaultSession.open(await db.save(), makeCredentials('pw'), 'f', 'f')
+    const uuid = entry.uuid.id
+
+    session.updateEntry(uuid, { title: 'Bank', username: 'agent-008', url: '', tags: [] })
+    const updated = session.db.getDefaultGroup().entries[0]
+    expect(updated.fields.get('UserName')).toBeInstanceOf(kdbxweb.ProtectedValue)
+    expect(session.reveal(uuid, 'UserName')).toBe('agent-008')
+    expect(session.reveal(uuid, 'Notes')).toBe('pin 1234')
+    expect(updated.fields.get('Title')).toBe('Bank')
+  })
+})
+
+describe('save bookkeeping', () => {
+  it('stays dirty when an edit lands while a save is in flight', async () => {
+    const session = await open(await makeFile())
+    session.createEntry(undefined, { title: 'A', username: '', url: '', notes: '', tags: [] })
+    const savedAt = session.revision
+    const bytes = session.save()
+    session.createEntry(undefined, { title: 'B', username: '', url: '', notes: '', tags: [] })
+    await bytes
+    session.markSaved(savedAt)
+    expect(session.dirty).toBe(true)
+    session.markSaved(session.revision)
+    expect(session.dirty).toBe(false)
+  })
+})
+
 describe('totp', () => {
   it('matches the RFC 6238 SHA1 vector', () => {
     // RFC secret "12345678901234567890", T=59 → 94287082 (8 digits)
     const secret = new TextEncoder().encode('12345678901234567890')
     expect(totp({ secret, digits: 8, period: 30, algorithm: 'sha1' }, 59_000).code).toBe('94287082')
+  })
+
+  it('rejects malformed URIs without echoing the seed', () => {
+    let error: unknown
+    try {
+      parseOtp('otpauth://%%%secret=SEEDSEEDSEED')
+    } catch (e) {
+      error = e
+    }
+    expect(error).toBeInstanceOf(Error)
+    expect(JSON.stringify(error, Object.getOwnPropertyNames(error))).not.toContain('SEEDSEED')
+    expect(() => parseOtp('otpauth://totp/x?secret=GEZDGNBV&period=0')).toThrow(/period/)
+    expect(() => parseOtp('otpauth://totp/x?secret=GEZDGNBV&digits=abc')).toThrow(/length/)
   })
 
   it('parses otpauth URIs and bare seeds', () => {

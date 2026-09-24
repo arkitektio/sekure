@@ -51,7 +51,12 @@ export function AccountMenu() {
       return
     }
     try {
-      await api.auth.logout()
+      const { revoked } = await api.auth.logout()
+      if (!revoked) {
+        toast.warning('Disconnected, but Google did not confirm removing access', {
+          description: 'Remove Sekure at myaccount.google.com/permissions.'
+        })
+      }
       navigate('/')
     } catch (e) {
       toast.error(displayError(e))

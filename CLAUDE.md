@@ -14,19 +14,42 @@ Tailwind v4 + shadcn (radix-vega), zustand, react-hook-form + zod, vitest, pnpm 
   the bundler, so keep them in protocol files with no other imports.
 - **Every IPC listener exposed to the renderer returns a disposer** (`subscribe()` in
   the preload).
+- **Register IPC only through `IpcTransport`.** It rejects senders that are not the top
+  frame of our own origin (`isTrustedSender`). Never call `ipcMain` directly. Treat every
+  argument as untrusted: validate ids, paths, URLs and settings in main (see
+  `lib/urls.ts`, `vault/settings.ts`, `SourcesModule.resolve`).
+- **The CSP lives in `CONTENT_SECURITY_POLICY` (`src/main/scheme.ts`).** It is injected
+  into `index.html` at build time and sent as a header. Never add remote hosts; fetch in
+  main instead (like the avatar).
 - **The main bundle includes all deps** (`externalizeDeps: false`). CJS/UMD packages
   such as electron-updater and kdbxweb have no named ESM exports as externals, so keep
   runtime deps in `devDependencies`.
 - Automated runs must never trigger `systemPreferences.promptTouchID` on a dev machine.
-  Stub it to throw.
+  Stub it to throw. When driving the real app, untick "Unlock with Touch ID next time"
+  before unlocking.
+- **Vault files are untrusted input.** KDF parameters are capped before the KDF runs
+  (`checkKdfParameters`). Preferences imported from a vault never enable auto-type, and
+  a shortcut must pass `isSafeGlobalShortcut`. Protected standard fields (Title,
+  UserName, URL, Notes) stay out of snapshots, the same way passwords do.
+- Google access is `drive.file` only. Existing vaults are granted through the Picker
+  (`drive/picker.ts`, served on loopback in the system browser), never by widening the
+  scope.
 - **Auto-type values go through the clipboard only**, never argv, a log line or an event.
   `AutoTypeModule` restores the previous clipboard right after the paste. The injector
   in `src/main/autotype/injector.ts` takes an injected `exec`; tests stub it so they
   never send real keystrokes.
 - Polling IPC (e.g. `vault:otp`) must **not** reset the idle auto-lock timer. Only user
   input does (`vault:activity`).
+- **Deidentify (`src/main/deidentify`, `DeidentifyModule`) keeps vault secrets in main.**
+  `VaultSession.findSecrets` returns positions and entry/field *names* only. Credential
+  spans reach the popup as locked segments with no `text`. Placeholders for
+  `CREDENTIAL`/`SECRET` are never added to the re-identify mapping. The captured text and
+  the mapping live in memory only, are never logged (counts only), and are cleared on lock
+  and after 30 minutes unused. Nothing is shown until the vault is unlocked, so the hard
+  check always runs. The selection is read through the clipboard, which is restored
+  afterwards.
 - **Search (`src/main/search`) indexes non-secret text only.** That means titles, types,
-  groups, tags, hosts, usernames, custom-field *names* and the start of the notes. Embedding
+  groups, tags, hosts, usernames, custom-field _names_ and the start of the notes. Embedding
   vectors stay in memory, are never written to disk, and are dropped on lock. The model is
   downloaded by main, pinned to a revision and checked with sha256 (`MODEL` in
   `search/protocol.ts`). Never widen the renderer CSP for it. `search:query` must not reset
@@ -57,6 +80,10 @@ Tailwind v4 + shadcn (radix-vega), zustand, react-hook-form + zod, vitest, pnpm 
   nothing native gets bundled. The WASM is copied to `out/main/ort` by a plugin in
   `electron.vite.config.ts` and unpacked from the asar. `search/e5.int.test.ts` runs the real
   model when `SEKURE_MODEL_DIR` is set.
+- Downloaded models share `src/main/models` (`ModelSpec`, sha256-checked `ensureModel`,
+  `WorkerClient`/`serveModel`). The PII model is GLiNER multi-PII **fp16**: its int8 export
+  finds nothing. `deidentify/gliner.int.test.ts` runs it when `SEKURE_GLINER_DIR` is set.
+  Floating popups (auto-type, deidentify) are built with `modules/popup.ts`.
 - `src/renderer/src/{pages,vault,components/ui}`: screens, vault widgets, shadcn primitives.
 
 ## Checks

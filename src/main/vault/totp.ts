@@ -35,14 +35,25 @@ export function base32Decode(input: string): Uint8Array {
 export function parseOtp(source: string): TotpParams {
   const trimmed = source.trim()
   if (trimmed.startsWith('otpauth://')) {
-    const url = new URL(trimmed)
+    // Node's ERR_INVALID_URL carries the whole input (seed included) on
+    // `.input`; never let that error escape into a log.
+    const url = URL.parse(trimmed)
+    if (!url) throw new Error('Invalid one-time password URI')
     const secret = url.searchParams.get('secret')
     if (!secret) throw new Error('otpauth URI has no secret')
     const algo = (url.searchParams.get('algorithm') ?? 'SHA1').toLowerCase()
+    const digits = Number(url.searchParams.get('digits') ?? 6)
+    const period = Number(url.searchParams.get('period') ?? 30)
+    if (!Number.isInteger(digits) || digits < 6 || digits > 10) {
+      throw new Error('Unsupported one-time password length')
+    }
+    if (!Number.isInteger(period) || period < 1 || period > 86_400) {
+      throw new Error('Unsupported one-time password period')
+    }
     return {
       secret: base32Decode(secret),
-      digits: Number(url.searchParams.get('digits') ?? 6),
-      period: Number(url.searchParams.get('period') ?? 30),
+      digits,
+      period,
       algorithm: algo === 'sha256' || algo === 'sha512' ? algo : 'sha1'
     }
   }
