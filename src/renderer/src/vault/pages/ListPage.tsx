@@ -1,5 +1,6 @@
-import { useMemo } from 'react'
-import { Check, ChevronDown, Paperclip, Timer, Users, UserX } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Check, ChevronDown, Paperclip, Timer, Trash2, Users, UserX } from 'lucide-react'
+import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
 import { Kbd } from '@/components/ui/kbd'
@@ -14,7 +15,17 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { VaultAvatar } from '@/components/VaultAvatar'
 import { listPeople, personFilter, personName } from '../people'
-import { entryTitle } from '@/lib/api'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from '@/components/ui/alert-dialog'
+import { api, displayError, entryTitle } from '@/lib/api'
 import { renderSummaryIcon } from '../icons'
 import { NewEntryButton } from '../NewEntryButton'
 import { clickOptions } from '../tabs'
@@ -38,6 +49,53 @@ function descendantIds(root: VaultGroupNode, uuid: string): Set<string> | undefi
     if (found) return found
   }
   return undefined
+}
+
+function findGroup(root: VaultGroupNode, uuid: string): VaultGroupNode | undefined {
+  if (root.uuid === uuid) return root
+  for (const g of root.groups) {
+    const found = findGroup(g, uuid)
+    if (found) return found
+  }
+  return undefined
+}
+
+/** Permanently deletes everything in the recycle bin, after a confirmation. */
+function EmptyBinButton({ count }: { count: number }) {
+  const [confirm, setConfirm] = useState(false)
+  const empty = async () => {
+    try {
+      const { result } = await api.vault.emptyRecycleBin()
+      toast.success(result === 1 ? 'Deleted 1 entry for good' : `Deleted ${result} entries for good`)
+    } catch (e) {
+      toast.error(displayError(e))
+    }
+  }
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={() => setConfirm(true)}>
+        <Trash2 /> Empty
+      </Button>
+      <AlertDialog open={confirm} onOpenChange={setConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Empty the recycle bin?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {count === 1 ? 'The entry' : `All ${count} entries`} in the recycle bin, with their
+              history and attachments, will be deleted for good. The change is written to the file
+              when you save.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={empty}>
+              Empty recycle bin
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
 }
 
 /** A group, a category or all entries, as a page in a tab. */
@@ -114,6 +172,9 @@ export function ListPage({ scope, person }: { scope: string; person?: string }) 
         .sort((a, b) => a.title.localeCompare(b.title))
     )
   }, [snapshot, scope, person, scopedPerson])
+  const isBin = !!snapshot && !!findGroup(snapshot.root, scope)?.isRecycleBin
+  // Emptying deletes the whole bin, whatever the person filter shows.
+  const binCount = isBin ? snapshot.entries.filter((e) => e.inRecycleBin).length : 0
 
   return (
     <div className="flex h-full flex-col">
@@ -121,7 +182,11 @@ export function ListPage({ scope, person }: { scope: string; person?: string }) 
         actions={
           <>
             {!scopedPerson && <PersonFilter scope={scope} person={person} />}
-            <NewEntryButton />
+            {isBin ? (
+              binCount > 0 && <EmptyBinButton count={binCount} />
+            ) : (
+              <NewEntryButton />
+            )}
           </>
         }
       >
@@ -133,10 +198,12 @@ export function ListPage({ scope, person }: { scope: string; person?: string }) 
         {entries.length === 0 ? (
           <Empty className="py-16">
             <EmptyHeader>
-              <EmptyTitle>No entries</EmptyTitle>
-              <EmptyDescription>
-                Create one with the + button, or press <Kbd>⌘N</Kbd>.
-              </EmptyDescription>
+              <EmptyTitle>{isBin ? 'The recycle bin is empty' : 'No entries'}</EmptyTitle>
+              {!isBin && (
+                <EmptyDescription>
+                  Create one with the + button, or press <Kbd>⌘N</Kbd>.
+                </EmptyDescription>
+              )}
             </EmptyHeader>
           </Empty>
         ) : (

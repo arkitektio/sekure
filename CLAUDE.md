@@ -93,6 +93,10 @@ Tailwind v4 + shadcn (radix-vega), zustand, react-hook-form + zod, vitest, pnpm 
   finds nothing. `deidentify/gliner.int.test.ts` runs it when `SEKURE_GLINER_DIR` is set.
   Floating popups (auto-type, deidentify) are built with `modules/popup.ts`.
 - `src/renderer/src/{pages,vault,components/ui}`: screens, vault widgets, shadcn primitives.
+- `AppUpdater` (electron-updater, GitHub releases) owns one `UpdateState` (`updater/protocol.ts`)
+  and broadcasts it. It is registered in every build but only packaged builds check (dev
+  reports `disabled`). The rail and welcome strip show `UpdateReady`, and Settings has
+  `UpdateSettings`. A restart saves a dirty vault first and aborts if the save fails.
 - The open vault is laid out like orkestrator-next (`vault/layout/VaultLayout.tsx`):
   - A rail holds the search pill (`SearchPalette.tsx`, a palette anchored to the pill), a tile
     row (`RailTiles`: Home, All entries, New entry), the open tabs, and the `VaultSwitcher`

@@ -14,6 +14,7 @@ import { Separator } from '@/components/ui/separator'
 import { BrandCustomizer } from '@/components/BrandCustomizer'
 import { SmartSearchSettings } from '@/components/SmartSearchSettings'
 import { DeidentifySettings } from '@/components/DeidentifySettings'
+import { UpdateSettings } from '@/components/UpdateSettings'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePlatform } from '@/hooks/usePlatform'
@@ -246,6 +247,8 @@ export function SettingsButton() {
           <SmartSearchSettings />
           <Separator />
           <DeidentifySettings />
+          <Separator />
+          <UpdateSettings />
         </DialogContent>
       </Dialog>
     </>

@@ -149,7 +149,8 @@ if (!app.requestSingleInstanceLock()) {
     manager.register(autotype)
     manager.register(new DeidentifyModule(ipc, windows, vault, autotype))
     manager.register(new PreferencesModule(ipc, windows, vault, autotype))
-    if (app.isPackaged) manager.register(new AppUpdater(ipc, windows))
+    // Registered in dev too, so the renderer can ask; only packaged builds check.
+    manager.register(new AppUpdater(ipc, windows, app.isPackaged))
     manager.register(windows)
     await manager.setup()
   })

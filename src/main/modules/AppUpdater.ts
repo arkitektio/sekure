@@ -5,6 +5,7 @@ import Store from 'electron-store'
 import { IpcTransport } from './IpcTransport'
 import { WindowManager } from './WindowManager'
 import { AppModule } from './AppModule'
+import { UPDATE_STATE_CHANNEL, type UpdateChannel, type UpdateState } from '../updater/protocol'
 
 // User-facing update channels. "next" surfaces prereleases; "latest" is stable.
 // NOTE: the "next" channel rides electron-builder's standard `beta.yml` carrier
@@ -12,96 +13,113 @@ import { AppModule } from './AppModule'
 // the GitHub publisher does not auto-detect channels, so there is no `rc.yml`.
 // The visible identity ("Next" label, `-rc` version suffix) is intentionally
 // decoupled from the internal carrier (`beta.yml`).
-type UpdateChannel = 'latest' | 'next'
 
 const STORE_KEY = 'updateChannel'
+const CHECK_EVERY_MS = 4 * 60 * 60 * 1000
 
+/**
+ * Auto-update through electron-updater (GitHub releases). Main owns one
+ * `UpdateState` and broadcasts it; the rail shows "Update ready · Restart" and
+ * Settings shows the version, channel and a manual check. Registered in every
+ * build, but only packaged builds check (`enabled`); dev reports `disabled`.
+ */
 export class AppUpdater implements AppModule {
   private store = new Store()
+  private state: UpdateState
 
   constructor(
     private ipcTransport: IpcTransport,
-    private windowManager: WindowManager
-  ) {}
+    private windowManager: WindowManager,
+    private enabled: boolean
+  ) {
+    this.state = {
+      phase: enabled ? 'idle' : 'disabled',
+      current: app.getVersion(),
+      channel: this.resolveChannel()
+    }
+  }
 
   setup() {
+    const h = this.ipcTransport.handleChannel.bind(this.ipcTransport)
+    h('updater:state', () => this.state)
+    h('updater:check', () => this.check())
+    // `setImmediate` so this call's IPC reply is flushed before the app
+    // starts tearing itself down.
+    h('updater:install', () => {
+      if (this.state.phase !== 'ready') throw new Error('No update is ready to install')
+      setImmediate(() => autoUpdater.quitAndInstall())
+    })
+    h('updater:setChannel', async (_e, channel: unknown) => {
+      const next: UpdateChannel = channel === 'next' ? 'next' : 'latest'
+      this.store.set(STORE_KEY, next)
+      this.set({ channel: next })
+      if (!this.enabled) return
+      this.applyChannel(next, true)
+      try {
+        await this.check()
+      } finally {
+        autoUpdater.allowDowngrade = false
+      }
+    })
+
+    if (!this.enabled) return
+
     log.transports.file.level = 'info'
     autoUpdater.logger = log
-
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
+    this.applyChannel(this.state.channel)
 
-    // Resolve the active channel and configure electron-updater accordingly.
-    this.applyChannel(this.resolveChannel())
-
-    autoUpdater.on('checking-for-update', () => this.broadcast('updater:status', 'Checking…'))
-    autoUpdater.on('update-available', (info) => this.broadcast('updater:available', info))
-    autoUpdater.on('update-not-available', () => this.broadcast('updater:none'))
-    autoUpdater.on('download-progress', (p) => this.broadcast('updater:progress', p))
-    autoUpdater.on('error', (err) => this.broadcast('updater:error', String(err)))
-
-    // The renderer shows this as a row in the rail with a Restart button,
-    // rather than a modal that steals focus from whatever the user was in
-    // the middle of. Ignoring the row is safe: `autoInstallOnAppQuit` means
-    // "Later" was always the default outcome anyway.
+    autoUpdater.on('checking-for-update', () => this.set({ phase: 'checking', error: undefined }))
+    autoUpdater.on('update-available', (info) =>
+      this.set({ phase: 'downloading', version: info.version, progress: 0 })
+    )
+    autoUpdater.on('update-not-available', () =>
+      this.set({ phase: 'upToDate', version: undefined, progress: undefined })
+    )
+    autoUpdater.on('download-progress', (p) =>
+      this.set({ phase: 'downloading', progress: p.percent / 100 })
+    )
+    autoUpdater.on('error', (err) => {
+      log.warn('Update failed', err)
+      // A download that was already complete stays installable.
+      if (this.state.phase !== 'ready') this.set({ phase: 'error', error: String(err) })
+    })
     autoUpdater.on('update-downloaded', async (info) => {
-      if (this.windowManager.getAllWindows().length > 0) {
-        this.broadcast('updater:downloaded', { version: info.version })
-        return
-      }
-      // No window to put the row in — fall back to the native prompt.
+      this.set({ phase: 'ready', version: info.version, progress: 1 })
+      // With a window, the rail shows it (no modal stealing focus); without one
+      // (e.g. only the auto-type popup ran), fall back to the native prompt.
+      if (this.windowManager.mainWindowVisible) return
       const r = await dialog.showMessageBox({
         type: 'info',
         buttons: ['Restart now', 'Later'],
         defaultId: 0,
-        message: `Update ${info.version} downloaded`,
-        detail: 'Restart to install.'
+        message: `Sekure ${info.version} is ready`,
+        detail: 'Restart to install it, or it installs the next time you quit.'
       })
       if (r.response === 0) autoUpdater.quitAndInstall()
     })
 
-    // Start the first check a little after launch
-    setTimeout(() => autoUpdater.checkForUpdates(), 5000)
-    // Periodic check (e.g., every 4 hours)
-    setInterval(() => autoUpdater.checkForUpdates(), 4 * 60 * 60 * 1000)
+    setTimeout(() => void this.check(), 5000)
+    setInterval(() => void this.check(), CHECK_EVERY_MS)
+  }
 
-    this.ipcTransport.handleChannel('check-for-updates', async () => {
-      try {
-        const result = await autoUpdater.checkForUpdates()
-        return { success: true, result }
-      } catch (error) {
-        console.error('Manual update check failed:', error)
-        return { success: false, error: String(error) }
-      }
-    })
+  private async check() {
+    // Nothing to do in dev, and a finished download needs no second look.
+    if (!this.enabled || this.state.phase === 'ready') return
+    try {
+      await autoUpdater.checkForUpdates()
+    } catch (e) {
+      this.set({ phase: 'error', error: e instanceof Error ? e.message : String(e) })
+    }
+  }
 
-    // `setImmediate` so this call's IPC reply is flushed before the app
-    // starts tearing itself down.
-    this.ipcTransport.handleChannel('quit-and-install', async () => {
-      setImmediate(() => autoUpdater.quitAndInstall())
-      return { success: true }
-    })
-
-    this.ipcTransport.handleChannel('get-update-channel', async () => {
-      return { channel: this.resolveChannel(), version: app.getVersion() }
-    })
-
-    this.ipcTransport.handleChannel('set-update-channel', async (_e, channel: UpdateChannel) => {
-      try {
-        const next: UpdateChannel = channel === 'next' ? 'next' : 'latest'
-        this.store.set(STORE_KEY, next)
-        this.applyChannel(next, true)
-        try {
-          const result = await autoUpdater.checkForUpdates()
-          return { success: true, result }
-        } finally {
-          autoUpdater.allowDowngrade = false
-        }
-      } catch (error) {
-        console.error('Set update channel failed:', error)
-        return { success: false, error: String(error) }
-      }
-    })
+  private set(patch: Partial<UpdateState>) {
+    this.state = { ...this.state, ...patch }
+    for (const win of this.windowManager.getAllWindows()) {
+      if (win.isDestroyed()) continue
+      this.ipcTransport.sendTo(win.webContents, UPDATE_STATE_CHANNEL, this.state)
+    }
   }
 
   /**
@@ -133,17 +151,5 @@ export class AppUpdater implements AppModule {
     }
     // Set after `channel`: electron-updater's channel setter turns it on.
     autoUpdater.allowDowngrade = allowDowngrade
-  }
-
-  /**
-   * Every window, not just the main one: a popout runs the same renderer shell
-   * and so draws its own rail, and an update row missing from the window the
-   * user happens to be in would be the one place it mattered.
-   */
-  private broadcast(channel: string, ...args: unknown[]) {
-    for (const win of this.windowManager.getAllWindows()) {
-      if (win.isDestroyed()) continue
-      this.ipcTransport.sendTo(win.webContents, channel, ...args)
-    }
   }
 }

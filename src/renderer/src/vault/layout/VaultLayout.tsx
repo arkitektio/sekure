@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, Lock, Save } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Kbd } from '@/components/ui/kbd'
 import { SettingsButton } from '@/components/SettingsDialog'
+import { UpdateReady } from '@/components/UpdateReady'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useWindowState } from '@/hooks/useChrome'
 import { useVault } from '@/stores/vault'
@@ -100,6 +101,9 @@ export function VaultLayout({ children }: { children: ReactNode }) {
         <nav className="min-h-0 flex-1 overflow-y-auto px-2">
           <RailTabs />
         </nav>
+        <div className="shrink-0 px-2 pt-1">
+          <UpdateReady />
+        </div>
         <div className="flex shrink-0 items-center gap-1 px-2 pt-1 pb-2">
           <VaultSwitcher />
           <div className="app-no-drag flex items-center">

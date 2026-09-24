@@ -112,6 +112,21 @@ describe('VaultSession', () => {
     expect(session.snapshot().entries.find((e) => e.uuid === uuid)?.inRecycleBin).toBe(true)
   })
 
+  it('empties the recycle bin for good', async () => {
+    const session = await open(await makeFile())
+    const [first, ...rest] = session.snapshot().entries
+    await session.addAttachment(first.uuid, 'scan.pdf', new Uint8Array([1, 2, 3]))
+    session.deleteEntry(first.uuid)
+    expect(session.emptyRecycleBin()).toBe(1)
+    expect(session.emptyRecycleBin()).toBe(0)
+
+    const reloaded = await open(await session.save())
+    const snap = reloaded.snapshot()
+    expect(snap.entries.map((e) => e.uuid)).toEqual(rest.map((e) => e.uuid))
+    // The bin group itself stays, empty.
+    expect(snap.root.groups.find((g) => g.isRecycleBin)?.entryCount).toBe(0)
+  })
+
   it('merges a concurrently edited remote copy', async () => {
     const original = await makeFile()
     const local = await open(original)

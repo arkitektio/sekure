@@ -26,6 +26,11 @@ import {
 } from '../main/preferences/protocol'
 import { WINDOW_STATE_CHANNEL, type WindowState } from '../main/window/protocol'
 import {
+  UPDATE_STATE_CHANNEL,
+  type UpdateChannel,
+  type UpdateState
+} from '../main/updater/protocol'
+import {
   SEARCH_STATUS_CHANNEL,
   type SearchHit,
   type SemanticStatus,
@@ -106,6 +111,7 @@ const api = {
       invoke('vault:createGroup', parent, name),
     renameGroup: (uuid: string, name: string): Mutation => invoke('vault:renameGroup', uuid, name),
     deleteGroup: (uuid: string): Mutation => invoke('vault:deleteGroup', uuid),
+    emptyRecycleBin: (): Mutation<number> => invoke('vault:emptyRecycleBin'),
     pickAttachments: (uuid: string): Promise<string[]> => invoke('vault:pickAttachments', uuid),
     addAttachment: (uuid: string, name: string, bytes: Uint8Array): Mutation<string> =>
       invoke('vault:addAttachment', uuid, name, bytes),
@@ -195,9 +201,12 @@ const api = {
     onChange: (cb: (p: Preferences) => void) => subscribe(PREFERENCES_CHANGED_CHANNEL, cb)
   },
   updater: {
-    check: () => invoke('check-for-updates'),
-    quitAndInstall: () => invoke('quit-and-install'),
-    onDownloaded: (cb: (info: { version: string }) => void) => subscribe('updater:downloaded', cb)
+    state: (): Promise<UpdateState> => invoke('updater:state'),
+    check: (): Promise<void> => invoke('updater:check'),
+    /** Restart into the downloaded update. */
+    install: (): Promise<void> => invoke('updater:install'),
+    setChannel: (channel: UpdateChannel): Promise<void> => invoke('updater:setChannel', channel),
+    onState: (cb: (s: UpdateState) => void) => subscribe(UPDATE_STATE_CHANNEL, cb)
   }
 }
 

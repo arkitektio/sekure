@@ -426,6 +426,24 @@ export class VaultSession {
     this.touch()
   }
 
+  /**
+   * Permanently delete everything in the recycle bin. Records DeletedObjects so
+   * merge does not resurrect them, and drops attachments nothing uses any more.
+   * Returns how many entries were deleted.
+   */
+  emptyRecycleBin(): number {
+    const uuid = this.db.meta.recycleBinUuid
+    const bin = uuid && this.db.getGroup(uuid)
+    if (!bin) return 0
+    const count = [...bin.allEntries()].length
+    if (!count && !bin.groups.length) return 0
+    for (const g of [...bin.groups]) this.db.move(g, null)
+    for (const e of [...bin.entries]) this.db.move(e, null)
+    this.db.cleanup({ binaries: true })
+    this.touch()
+    return count
+  }
+
   // ---------------------------------------------------------------- database custom data
 
   /** A value from the database's Meta/CustomData (app settings that travel with the file). */

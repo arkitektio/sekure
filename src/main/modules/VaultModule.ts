@@ -139,6 +139,7 @@ export class VaultModule implements AppModule {
       this.mutate((s) => s.renameGroup(uuid, name))
     )
     h('vault:deleteGroup', (_e, uuid: string) => this.mutate((s) => s.deleteGroup(uuid)))
+    h('vault:emptyRecycleBin', () => this.mutate((s) => s.emptyRecycleBin()))
 
     // ---- attachments
     h('vault:pickAttachments', (e, uuid: string) =>

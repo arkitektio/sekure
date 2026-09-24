@@ -273,6 +273,39 @@ export const ENTRY_TYPES: EntryType[] = [
     keywords: ['geburtsurkunde', 'acte de naissance', 'standesamt', 'birth record']
   },
   {
+    id: 'marriageCertificate',
+    version: 1,
+    label: 'Marriage certificate',
+    description: 'Marriage or civil partnership: certificate, date and registry office.',
+    group: 'identity',
+    kdbxIcon: 9,
+    fields: [
+      field('Partners', 'text', { required: true, placeholder: 'Jane Doe & John Doe' }),
+      field('Certificate number', 'text', { required: true }),
+      field('Date of marriage', 'date'),
+      field('Place of marriage'),
+      field('Issuing country', 'country'),
+      field('Registry office'),
+      field('Date of issue', 'date')
+    ],
+    // Shares `Certificate number` with the birth certificate; the longer signature wins.
+    signature: ['Certificate number', 'Date of marriage'],
+    subtitle: ['Partners'],
+    titleHint: ['Partners'],
+    keywords: [
+      'heiratsurkunde',
+      'eheurkunde',
+      'marriage',
+      'wedding',
+      'hochzeit',
+      'civil partnership',
+      'lebenspartnerschaft',
+      'acte de mariage',
+      'certificato di matrimonio',
+      'huwelijksakte'
+    ]
+  },
+  {
     id: 'personalDetails',
     version: 1,
     label: 'Person',
@@ -398,6 +431,79 @@ export const ENTRY_TYPES: EntryType[] = [
       'nir',
       'sécurité sociale',
       'sin'
+    ]
+  },
+  {
+    id: 'residenceRegistration',
+    version: 1,
+    label: 'Residence registration',
+    description: 'Registered address, e.g. a Meldebescheinigung, and since when.',
+    group: 'government',
+    kdbxIcon: 9,
+    fields: [
+      ...names,
+      field('Registered address', 'multiline', { required: true }),
+      field('Residence kind', 'select', {
+        label: 'Kind',
+        options: ['Main residence', 'Secondary residence', 'EU/EEA registration']
+      }),
+      field('Registered since', 'date'),
+      field('Country', 'country'),
+      field('Issuing authority'),
+      field('Reference number'),
+      field('Date of issue', 'date')
+    ],
+    signature: ['Registered address'],
+    ...person,
+    keywords: [
+      'meldebescheinigung',
+      'meldebestätigung',
+      'meldezettel',
+      'anmeldung',
+      'anmeldebescheinigung',
+      'abmeldung',
+      'wohnsitz',
+      'registration certificate',
+      'proof of residence',
+      'proof of address',
+      'attestation de domicile',
+      'certificato di residenza',
+      'empadronamiento'
+    ]
+  },
+  {
+    id: 'criminalRecord',
+    version: 1,
+    label: 'Criminal record certificate',
+    description: 'Police clearance or certificate of good conduct and its date.',
+    group: 'government',
+    kdbxIcon: 9,
+    fields: [
+      ...names,
+      field('Record reference', 'text', { required: true, label: 'Reference number' }),
+      field('Issuing country', 'country'),
+      field('Issuing authority'),
+      field('Purpose', 'text', { placeholder: 'Employment, visa, licensing…' }),
+      field('Date of issue', 'date'),
+      field('Valid until', 'date')
+    ],
+    signature: ['Record reference'],
+    ...person,
+    expiryField: 'Valid until',
+    keywords: [
+      'führungszeugnis',
+      'polizeiliches führungszeugnis',
+      'strafregisterbescheinigung',
+      'strafregisterauszug',
+      'polizeizeugnis',
+      'criminal record',
+      'good conduct',
+      'good standing',
+      'police clearance',
+      'background check',
+      'casier judiciaire',
+      'certificato penale',
+      'verklaring omtrent het gedrag'
     ]
   },
   {

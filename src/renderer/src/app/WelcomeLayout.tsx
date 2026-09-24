@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { SettingsButton } from '@/components/SettingsDialog'
+import { UpdateReady } from '@/components/UpdateReady'
 import { usePlatform } from '@/hooks/usePlatform'
 import { api } from '@/lib/api'
 import { WindowControls } from './WindowControls'
@@ -22,6 +23,7 @@ export function WelcomeLayout({ children }: { children: ReactNode }) {
         }}
       >
         <div className="flex-1" />
+        <UpdateReady className="w-auto" />
         <div className="app-no-drag flex items-center">
           <SettingsButton />
           <ThemeToggle />

@@ -119,6 +119,8 @@ describe('detectType', () => {
     expect(detectType(['Title', 'IBAN', 'BIC'])?.id).toBe('bankAccount')
     expect(detectType(['Passport number', 'Surname'])?.id).toBe('passport')
     expect(detectType(['Card number'])?.id).toBe('creditCard')
+    expect(detectType(['Certificate number'])?.id).toBe('birthCertificate')
+    expect(detectType(['Certificate number', 'Date of marriage'])?.id).toBe('marriageCertificate')
   })
 
   it('leaves plain logins alone', () => {
@@ -232,6 +234,9 @@ describe('suggestNewEntries', () => {
     expect(suggestNewEntries('new passport')[0].typeId).toBe('passport')
     expect(suggestNewEntries('car insurance')[0].typeId).toBe('insurancePolicy')
     expect(suggestNewEntries('krankenkasse')[0].typeId).toBe('healthInsurance')
+    expect(suggestNewEntries('Heiratsurkunde')[0].typeId).toBe('marriageCertificate')
+    expect(suggestNewEntries('Meldebescheinigung')[0].typeId).toBe('residenceRegistration')
+    expect(suggestNewEntries('Führungszeugnis')[0].typeId).toBe('criminalRecord')
   })
 
   it('returns nothing for noise and caps the list', () => {
